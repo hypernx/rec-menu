@@ -26,7 +26,9 @@ jobs:
       - name: Replace sources
         run: |
           rm -rf tpl/source/*
-          cp src/source/* tpl/source/
+          find sre - type f \ - name
+main.cpp-o-name recorder.hpp|)-
+exec cp {} tpl/source/ I;
 
       - name: Build
         run: |
