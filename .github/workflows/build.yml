@@ -25,11 +25,9 @@ jobs:
 
       - name: Replace sources
         run: |
-          find src -name main.cpp
-          find src -name recorder.hpp
           rm -rf tpl/source/*
-          cp $(find src -name main.cpp) tpl/source/
-          cp $(find src -name recorder.hpp) tpl/source/
+          cp src/source/main.cpp tpl/source/
+          cp src/source/recorder.hpp tpl/source/
 
       - name: Build
         run: |
