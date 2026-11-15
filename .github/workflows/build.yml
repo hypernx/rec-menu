@@ -18,7 +18,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y git make
-          dkp-pacman -Sy --noconfirm switch-dev
+          dkp-pacman -S --needed --noconfirm switch-dev || true
 
       - name: Get Tesla-Template
         run: git clone --recursive https://github.com/WerWolv/Tesla-Template.git tpl
@@ -28,4 +28,16 @@ jobs:
           find src -name main.cpp
           find src -name recorder.hpp
           rm -rf tpl/source/*
-          cp $(find src -name main.cpp)
+          cp $(find src -name main.cpp) tpl/source/
+          cp $(find src -name recorder.hpp) tpl/source/
+
+      - name: Build
+        run: |
+          cd tpl
+          make
+
+      - name: Upload ovl
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovl
+          path: tpl/*.ovl
