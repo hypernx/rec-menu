@@ -20,15 +20,14 @@ jobs:
           apt-get install -y git make
           dkp-pacman -Sy --noconfirm switch-dev
 
-      - name: Get ovl-template
+      - name: Get Tesla-Template
         run: git clone --recursive https://github.com/WerWolv/Tesla-Template.git tpl
 
       - name: Replace sources
         run: |
           rm -rf tpl/source/*
-          find sre - type f \ - name
-main.cpp-o-name recorder.hpp|)-
-exec cp {} tpl/source/ I;
+          cp src/source/source/main.cpp tpl/source/
+          cp src/source/source/recorder.hpp tpl/source/
 
       - name: Build
         run: |
