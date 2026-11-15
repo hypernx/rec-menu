@@ -21,7 +21,7 @@ jobs:
           dkp-pacman -Sy --noconfirm switch-dev
 
       - name: Get ovl-template
-        run: git clone --recursive https://github.com/WerWolv/ovl-template.git tpl
+        run: git clone --recursive https://github.com/WerWolv/Tesla-Template.git tpl
 
       - name: Replace sources
         run: |
