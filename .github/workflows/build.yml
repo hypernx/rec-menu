@@ -29,6 +29,13 @@ jobs:
           cp src/source/main.cpp tpl/source/
           cp src/source/recorder.hpp tpl/source/
 
+      - name: Verify copied sources
+        run: |
+          echo '--- source signatures ---'
+          grep -n 'elapsedText' src/source/main.cpp src/source/recorder.hpp
+          echo '--- template signatures ---'
+          grep -n 'elapsedText' tpl/source/main.cpp tpl/source/recorder.hpp
+
       - name: Build
         run: |
           cd tpl

@@ -1,12 +1,13 @@
 #pragma once
+
 #include <switch.h>
-#include <string>
 #include <cstdio>
+#include <cstring>
 #include <sys/stat.h>
 
-// 録画・スクリーンショットのバックエンド。
-// スクリーンショットは capssc(caps:sc)でJPEGを取得し、SDカードに保存する。
-// 動画録画は未実装(TODO)。
+// Rec Menu backend.
+// Video recording is not implemented yet. Screenshot capture is initialized
+// only when requested so opening the overlay does not require caps:sc.
 namespace rec {
 
 enum Quality : u8 { Low = 0, Mid = 1, High = 2 };
@@ -16,42 +17,24 @@ struct State {
     Quality quality = Mid;
     bool showTimer = true;
     u64 startTick = 0;
-
-    bool capsReady = false;     // capsscInitialize が成功したか
-    u32 savedCount = 0;         // 今回の起動中に保存した枚数
-    u32 nextIndex = 0;          // 次に試すファイル番号
-    std::string shotMsg = "Ready"; // 画面に出す結果メッセージ
+    u32 savedCount = 0;
+    u32 nextIndex = 0;
+    char shotMsg[64] = "Ready";
 };
 
 inline State &state() {
-    static State s;
+    static State s{};
     return s;
 }
 
-// initServices の中(smセッション内)から呼ぶ
-inline void init() {
-    State &s = state();
-    Result rc = capsscInitialize();
-    s.capsReady = R_SUCCEEDED(rc);
-    if (!s.capsReady) {
-        char buf[48];
-        snprintf(buf, sizeof(buf), "Init err 0x%X", rc);
-        s.shotMsg = buf;
-    }
-    mkdir("sdmc:/switch", 0777);
-    mkdir("sdmc:/switch/rec-menu", 0777);
+inline bool isRecording() {
+    return state().recording;
 }
 
-inline void shutdown() {
-    if (state().capsReady) capsscExit();
-}
-
-inline bool isRecording() { return state().recording; }
-
+// UI-only placeholder: this toggles the timer state, not actual video capture.
 inline bool start() {
     State &s = state();
     if (s.recording) return true;
-    // TODO: 録画開始(grcdTransfer を別スレッドで読む、または sysmodule へIPC)
     s.startTick = armGetSystemTick();
     s.recording = true;
     return true;
@@ -59,72 +42,101 @@ inline bool start() {
 
 inline void stop() {
     State &s = state();
-    if (!s.recording) return;
-    // TODO: 録画停止
     s.recording = false;
 }
 
 inline bool fileExists(const char *path) {
-    FILE *f = fopen(path, "rb");
+    FILE *f = std::fopen(path, "rb");
     if (!f) return false;
-    fclose(f);
+    std::fclose(f);
     return true;
 }
 
-// スクリーンショットを撮って /switch/rec-menu/shot_00000.jpg のように保存する
-inline bool screenshot() {
+inline bool screenshotWithCapsService() {
     State &s = state();
-    char msg[64];
+    char msg[64] = {};
 
-    if (!s.capsReady) {
-        s.shotMsg = "caps not ready";
+    Result rc = capsscInitialize();
+    if (R_FAILED(rc)) {
+        std::snprintf(s.shotMsg, sizeof(s.shotMsg), "Init err 0x%X", rc);
         return false;
     }
 
-    // 大きなバッファはヒープではなく静的領域に置く
+    // Keep the large JPEG buffer out of the overlay thread's stack.
     static u8 jpegBuf[CAPSSC_JPEG_BUFFER_SIZE];
     u64 jpegSize = 0;
+    rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, sizeof(jpegBuf),
+                                     ViLayerStack_Screenshot, 1000000000LL);
+    capsscExit();
 
-    Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, sizeof(jpegBuf),
-                                            ViLayerStack_Screenshot, 1000000000LL);
     if (R_FAILED(rc)) {
-        snprintf(msg, sizeof(msg), "Capture err 0x%X", rc);
-        s.shotMsg = msg;
+        std::snprintf(s.shotMsg, sizeof(s.shotMsg), "Capture err 0x%X", rc);
         return false;
     }
     if (jpegSize == 0 || jpegSize > sizeof(jpegBuf)) {
-        s.shotMsg = "Bad size";
+        std::snprintf(s.shotMsg, sizeof(s.shotMsg), "Bad image size");
         return false;
     }
 
-    // 空いているファイル名を探す(上書き防止)
-    char path[96];
-    u32 idx = s.nextIndex;
-    do {
-        snprintf(path, sizeof(path), "sdmc:/switch/rec-menu/shot_%05u.jpg", idx);
-        idx++;
-    } while (fileExists(path) && idx < 100000);
+    bool saved = false;
+    tsl::hlp::doWithSDCardHandle([&]() {
+        // Ensure the destination directories exist. They may already exist.
+        mkdir("sdmc:/switch", 0777);
+        mkdir("sdmc:/switch/rec-menu", 0777);
 
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        s.shotMsg = "SD write err";
-        return false;
-    }
-    size_t written = fwrite(jpegBuf, 1, static_cast<size_t>(jpegSize), f);
-    fclose(f);
-    if (written != jpegSize) {
-        s.shotMsg = "SD write short";
-        return false;
-    }
+        char path[96] = {};
+        u32 idx = s.nextIndex;
+        bool found = false;
+        while (idx < 100000) {
+            std::snprintf(path, sizeof(path), "sdmc:/switch/rec-menu/shot_%05u.jpg", idx);
+            if (!fileExists(path)) {
+                found = true;
+                break;
+            }
+            ++idx;
+        }
+        if (!found) {
+            std::snprintf(s.shotMsg, sizeof(s.shotMsg), "No free filename");
+            return;
+        }
 
-    s.nextIndex = idx;
-    s.savedCount++;
-    snprintf(msg, sizeof(msg), "Saved %u", s.savedCount);
-    s.shotMsg = msg;
-    return true;
+        FILE *f = std::fopen(path, "wb");
+        if (!f) {
+            std::snprintf(s.shotMsg, sizeof(s.shotMsg), "SD write err");
+            return;
+        }
+
+        const size_t expected = static_cast<size_t>(jpegSize);
+        const size_t written = std::fwrite(jpegBuf, 1, expected, f);
+        const int closeResult = std::fclose(f);
+        if (written != expected || closeResult != 0) {
+            std::remove(path);
+            std::snprintf(s.shotMsg, sizeof(s.shotMsg), "SD write failed");
+            return;
+        }
+
+        s.nextIndex = idx + 1;
+        ++s.savedCount;
+        std::snprintf(msg, sizeof(msg), "Saved %u", s.savedCount);
+        std::snprintf(s.shotMsg, sizeof(s.shotMsg), "%s", msg);
+        saved = true;
+    });
+    return saved;
 }
 
-inline const std::string &shotStatus() { return state().shotMsg; }
+inline bool screenshot() {
+    bool result = false;
+    // capsscInitialize requires an SM session. Do this on demand, not at
+    // overlay startup, and always let the helper close its service session.
+    tsl::hlp::doWithSmSession([&]() {
+        result = screenshotWithCapsService();
+    });
+    return result;
+}
+
+inline const char *shotStatus() {
+    return state().shotMsg;
+}
 
 inline u32 elapsedSec() {
     const State &s = state();
@@ -132,11 +144,9 @@ inline u32 elapsedSec() {
     return static_cast<u32>(armTicksToNs(armGetSystemTick() - s.startTick) / 1000000000ULL);
 }
 
-inline std::string elapsedText() {
-    u32 t = elapsedSec();
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02u:%02u", t / 60, t % 60);
-    return buf;
+inline void elapsedText(char *out, size_t outSize) {
+    const u32 t = elapsedSec();
+    std::snprintf(out, outSize, "%02u:%02u", t / 60, t % 60);
 }
 
 inline const char *qualityName(Quality q) {
