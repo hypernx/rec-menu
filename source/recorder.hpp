@@ -5,6 +5,7 @@
 #include <cstring>
 #include <atomic>
 #include <sys/stat.h>
+#include <cstdlib>
 #include "mp4.hpp"
 #include "osd.hpp"
 
@@ -97,10 +98,26 @@ constexpr size_t kVBufSize  = 0x58000;   // MP4の映像1かたまり分(1フレ
 constexpr size_t kAXferSize = 0x1000;    // 音声の受け取り(本体の録画機能と同じ)
 constexpr size_t kABufSize  = 0x8000;    // MP4の音声1かたまり分(約0.17秒)
 
-alignas(0x1000) static u8 g_vXfer[kVXferSize];
-alignas(0x1000) static u8 g_vBuf[kVBufSize];
-alignas(0x1000) static u8 g_aXfer[kAXferSize];
-alignas(0x1000) static u8 g_aBuf[kABufSize];
+// 録画用のバッファ(約0.7MB)。オーバーレイはメモリが少ないので、録画中だけ確保する
+static u8 *g_vXfer = nullptr;
+static u8 *g_vBuf = nullptr;
+static u8 *g_aXfer = nullptr;
+static u8 *g_aBuf = nullptr;
+
+inline void freeBuffers() {
+    free(g_vXfer); free(g_vBuf); free(g_aXfer); free(g_aBuf);
+    g_vXfer = g_vBuf = g_aXfer = g_aBuf = nullptr;
+}
+
+inline bool allocBuffers() {
+    if (!g_vXfer) g_vXfer = static_cast<u8 *>(aligned_alloc(0x1000, kVXferSize));
+    if (!g_vBuf)  g_vBuf  = static_cast<u8 *>(aligned_alloc(0x1000, kVBufSize));
+    if (!g_aXfer) g_aXfer = static_cast<u8 *>(aligned_alloc(0x1000, kAXferSize));
+    if (!g_aBuf)  g_aBuf  = static_cast<u8 *>(aligned_alloc(0x1000, kABufSize));
+    if (g_vXfer && g_vBuf && g_aXfer && g_aBuf) return true;
+    freeBuffers();
+    return false;
+}
 static mp4::VideoTrack g_video;
 static mp4::AudioTrack g_audio;
 static Mutex g_fileLock;
@@ -207,13 +224,16 @@ inline bool joinThread(Thread &t, bool &valid, u64 timeoutNs) {
     return true;
 }
 
+// スレッドが終わった後に呼ぶ(ファイルを閉じてバッファを返す)
 inline void closeFile() {
     State &s = state();
-    if (!s.fileOpen) return;
-    fsFileFlush(&s.file);
-    fsFileClose(&s.file);
-    fsFsClose(&s.sdfs);
-    s.fileOpen = false;
+    if (s.fileOpen) {
+        fsFileFlush(&s.file);
+        fsFileClose(&s.file);
+        fsFsClose(&s.sdfs);
+        s.fileOpen = false;
+    }
+    freeBuffers();
 }
 
 inline void startFail(const char *en, const char *jp) {
@@ -246,6 +266,11 @@ inline bool startLocked() {
     u64 dvrPid = 0;
     if (R_SUCCEEDED(pmdmntGetProcessId(&dvrPid, SYSDVR_PROGRAM_ID)) && dvrPid != 0) {
         startFail("Disable SysDVR", "SysDVR が動いているため録画できません");
+        return false;
+    }
+
+    if (!allocBuffers()) {
+        startFail("Out of memory", "メモリが足りないため録画できません");
         return false;
     }
 
@@ -430,10 +455,17 @@ inline void doScreenshot() {
         osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
         return;
     }
-    static u8 jpegBuf[CAPSSC_JPEG_BUFFER_SIZE];
+    // 512KBのバッファは撮るときだけ確保する
+    u8 *jpegBuf = static_cast<u8 *>(aligned_alloc(0x1000, CAPSSC_JPEG_BUFFER_SIZE));
+    if (!jpegBuf) {
+        s.shotMsg = "Out of memory";
+        osd::toast("メモリが足りないためスクリーンショットを撮れませんでした", osd::kRed, 4000);
+        return;
+    }
+    struct Free { u8 *p; ~Free() { free(p); } } freeJpeg{ jpegBuf };
     u64 jpegSize = 0;
-    Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, sizeof(jpegBuf), ViLayerStack_Screenshot, 1000000000LL);
-    if (R_FAILED(rc) || jpegSize == 0 || jpegSize > sizeof(jpegBuf)) {
+    Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, CAPSSC_JPEG_BUFFER_SIZE, ViLayerStack_Screenshot, 1000000000LL);
+    if (R_FAILED(rc) || jpegSize == 0 || jpegSize > CAPSSC_JPEG_BUFFER_SIZE) {
         s.shotMsg = R_FAILED(rc) ? errText(rc, msg, sizeof(msg)) : "Bad size";
         osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
         return;

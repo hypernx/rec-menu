@@ -27,6 +27,7 @@ inline ViDisplay g_display{};
 inline Layer g_timer, g_toast;
 inline stbtt_fontinfo g_font;
 inline bool g_ready = false;
+inline char g_status[48] = "not started";   // メニューに出す診断用の状態
 inline Mutex g_lock;
 
 // 通知の内容(どのスレッドからでも設定できる)
@@ -41,15 +42,16 @@ inline bool g_timerDirty = false;
 inline u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
 
 // 画面(1920x1080基準)上の位置と、描画用の大きさ(px)を指定してレイヤーを作る
-inline bool createLayer(Layer &L, int fbW, int fbH, float x, float y, float scale) {
+inline Result createLayer(Layer &L, int fbW, int fbH, float x, float y, float scale) {
     // libnx の viCreateLayer は __nx_vi_layer_id を使うので、一時的に差し替えて2枚目以降を作る
     u64 id = 0;
-    if (R_FAILED(viCreateManagedLayer(&g_display, ViLayerFlags(0), 0, &id))) return false;
+    Result rc = viCreateManagedLayer(&g_display, ViLayerFlags(0), 0, &id);
+    if (R_FAILED(rc)) return rc;
     const u64 saved = __nx_vi_layer_id;
     __nx_vi_layer_id = id;
-    Result rc = viCreateLayer(&g_display, &L.layer);
+    rc = viCreateLayer(&g_display, &L.layer);
     __nx_vi_layer_id = saved;
-    if (R_FAILED(rc)) return false;
+    if (R_FAILED(rc)) return rc;
 
     viSetLayerScalingMode(&L.layer, ViScalingMode_FitToLayer);
     s32 z = 0;
@@ -64,14 +66,16 @@ inline bool createLayer(Layer &L, int fbW, int fbH, float x, float y, float scal
     viSetLayerSize(&L.layer, s32(fbW * scale), s32(fbH * scale));
     viSetLayerPosition(&L.layer, x, y);
 
-    if (R_FAILED(nwindowCreateFromLayer(&L.win, &L.layer))) { viCloseLayer(&L.layer); return false; }
-    if (R_FAILED(framebufferCreate(&L.fb, &L.win, fbW, fbH, PIXEL_FORMAT_RGBA_8888, 2))) {
-        nwindowClose(&L.win); viCloseLayer(&L.layer); return false;
+    if (R_FAILED(rc = nwindowCreateFromLayer(&L.win, &L.layer))) { viDestroyManagedLayer(&L.layer); return rc; }
+    if (R_FAILED(rc = framebufferCreate(&L.fb, &L.win, fbW, fbH, PIXEL_FORMAT_RGBA_4444, 2))) {
+        nwindowClose(&L.win); viDestroyManagedLayer(&L.layer); return rc;
     }
-    framebufferMakeLinear(&L.fb);
+    if (R_FAILED(rc = framebufferMakeLinear(&L.fb))) {
+        framebufferClose(&L.fb); nwindowClose(&L.win); viDestroyManagedLayer(&L.layer); return rc;
+    }
     L.w = fbW; L.h = fbH;
     L.ok = true;
-    return true;
+    return 0;
 }
 
 inline void destroyLayer(Layer &L) {
@@ -82,30 +86,24 @@ inline void destroyLayer(Layer &L) {
     L.ok = false;
 }
 
-// ---- 描画ヘルパー(32bit RGBA、アルファは乗算済みで書く) ----
-struct Canvas { u32 *px; u32 stride; int w, h; };
+// ---- 描画ヘルパー ----
+// メモリ節約のため 16bit (RGBA4444、Teslaと同じ形式) で描く。色の指定は 0xAABBGGRR。
+struct Canvas { u16 *px; u32 stride; int w, h; };
 
-inline u32 premul(u32 rgba, u32 a8) {   // rgba = 0xAABBGGRR、a8 = 追加の不透明度(0-255)
-    u32 r = rgba & 0xFF, g = (rgba >> 8) & 0xFF, b = (rgba >> 16) & 0xFF, a = (rgba >> 24) & 0xFF;
-    a = a * a8 / 255;
-    return (a << 24) | ((b * a / 255) << 16) | ((g * a / 255) << 8) | (r * a / 255);
-}
-
-inline void blend(u32 &dst, u32 src) {   // どちらも乗算済み
-    const u32 sa = src >> 24;
+inline void blendPx(u16 &d, u32 color, u32 cov) {   // cov = 0-255 の覆い具合
+    const u32 sa = ((color >> 24) & 0xFF) * cov / 255;
     if (sa == 0) return;
-    if (sa == 255) { dst = src; return; }
-    const u32 ia = 255 - sa;
-    u32 out = 0;
-    for (int sh = 0; sh < 32; sh += 8) {
-        u32 c = ((src >> sh) & 0xFF) + (((dst >> sh) & 0xFF) * ia) / 255;
-        out |= (c > 255 ? 255 : c) << sh;
-    }
-    dst = out;
+    const u32 sr = color & 0xFF, sg = (color >> 8) & 0xFF, sb = (color >> 16) & 0xFF;
+    u32 dr = (d & 0xF) * 17, dg = ((d >> 4) & 0xF) * 17, db = ((d >> 8) & 0xF) * 17, da = ((d >> 12) & 0xF) * 17;
+    const u32 oa = sa + da * (255 - sa) / 255;
+    if (oa == 0) { d = 0; return; }
+    // アルファ付き同士の重ね合わせ(乗算していない色で計算)
+    auto mix = [&](u32 s, u32 dd) { return (s * sa + dd * da * (255 - sa) / 255) / oa; };
+    dr = mix(sr, dr); dg = mix(sg, dg); db = mix(sb, db);
+    d = u16((dr >> 4) | ((dg >> 4) << 4) | ((db >> 4) << 8) | ((oa >> 4) << 12));
 }
 
 inline void fill(Canvas &c, int x, int y, int w, int h, u32 color, int radius = 0) {
-    const u32 p = premul(color, 255);
     for (int yy = (y < 0 ? 0 : y); yy < y + h && yy < c.h; yy++)
         for (int xx = (x < 0 ? 0 : x); xx < x + w && xx < c.w; xx++) {
             if (radius > 0) {   // 角丸
@@ -114,7 +112,7 @@ inline void fill(Canvas &c, int x, int y, int w, int h, u32 color, int radius = 
                 if (yy < y + radius) dy = y + radius - yy; else if (yy >= y + h - radius) dy = yy - (y + h - radius - 1);
                 if (dx * dx + dy * dy > radius * radius) continue;
             }
-            blend(c.px[yy * c.stride + xx], p);
+            blendPx(c.px[yy * c.stride + xx], color, 255);
         }
 }
 
@@ -126,7 +124,7 @@ inline void circle(Canvas &c, int cx, int cy, int r, u32 color) {
             const float cov = d < r - 0.5f ? 1.f : (r + 0.5f - d);
             const int px = cx + x, py = cy + y;
             if (px < 0 || py < 0 || px >= c.w || py >= c.h) continue;
-            blend(c.px[py * c.stride + px], premul(color, u32(cov * 255)));
+            blendPx(c.px[py * c.stride + px], color, u32(cov * 255));
         }
 }
 
@@ -176,7 +174,7 @@ inline void text(Canvas &c, int x, int baseline, const char *s, float px, u32 co
                     if (!a) continue;
                     const int px2 = x + x0 + xx, py = baseline + y0 + yy;
                     if (px2 < 0 || py < 0 || px2 >= c.w || py >= c.h) continue;
-                    blend(c.px[py * c.stride + px2], premul(color, a));
+                    blendPx(c.px[py * c.stride + px2], color, a);
                 }
         }
         x += int(adv * sc);
@@ -184,21 +182,28 @@ inline void text(Canvas &c, int x, int baseline, const char *s, float px, u32 co
 }
 
 // ---- 初期化(Teslaの画面の準備ができた後、メインスレッドから1回呼ぶ) ----
+inline void setStatus(const char *step, Result rc) {
+    snprintf(g_status, sizeof(g_status), "%s err %04u-%04u", step, 2000 + R_MODULE(rc), R_DESCRIPTION(rc));
+}
+
 inline bool init() {
     if (g_ready) return true;
     mutexInit(&g_lock);
     PlFontData font{};
-    if (R_FAILED(plGetSharedFontByType(&font, PlSharedFontType_Standard))) return false;
+    Result rc = plGetSharedFontByType(&font, PlSharedFontType_Standard);
+    if (R_FAILED(rc)) { setStatus("font", rc); return false; }
     const u8 *data = static_cast<const u8 *>(font.address);
-    if (!stbtt_InitFont(&g_font, data, stbtt_GetFontOffsetForIndex(data, 0))) return false;
-    if (R_FAILED(viOpenDefaultDisplay(&g_display))) return false;
+    if (!stbtt_InitFont(&g_font, data, stbtt_GetFontOffsetForIndex(data, 0))) { snprintf(g_status, sizeof(g_status), "font init failed"); return false; }
+    if (R_FAILED(rc = viOpenDefaultDisplay(&g_display))) { setStatus("display", rc); return false; }
 
     const float sc = 1.5f;   // 描画1px = 画面(1080p)1.5px
-    // 右上のタイマー: 260x52
-    createLayer(g_timer, 260, 52, 1920 - 260 * sc - 30, 30, sc);
-    // 左下の通知: 760x60
-    createLayer(g_toast, 760, 60, 30, 1080 - 60 * sc - 40, sc);
+    // 右上のタイマー: 200x44
+    if (R_FAILED(rc = createLayer(g_timer, 200, 44, 1920 - 200 * sc - 30, 30, sc))) { setStatus("timer", rc); }
+    // 左下の通知: 640x52
+    Result rc2 = createLayer(g_toast, 640, 52, 30, 1080 - 52 * sc - 40, sc);
+    if (R_FAILED(rc2)) setStatus("toast", rc2);
     g_ready = g_timer.ok || g_toast.ok;
+    if (g_timer.ok && g_toast.ok) snprintf(g_status, sizeof(g_status), "OK");
     g_toastDirty = g_timerDirty = true;   // 最初に透明な画面を出しておく
     return g_ready;
 }
@@ -254,16 +259,16 @@ inline void tick() {
 
     if (toastNeed && g_toast.ok) {
         u32 stride = 0;
-        u32 *px = static_cast<u32 *>(framebufferBegin(&g_toast.fb, &stride));
-        Canvas c{ px, stride / 4, g_toast.w, g_toast.h };
-        for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 4);
+        u16 *px = static_cast<u16 *>(framebufferBegin(&g_toast.fb, &stride));
+        Canvas c{ px, stride / 2, g_toast.w, g_toast.h };
+        for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 2);
         if (toastOn) {
-            const float fs = 24;
+            const float fs = 22;
             int tw = textWidth(toastText, fs);
             if (tw > c.w - 40) tw = c.w - 40;
             fill(c, 0, 4, tw + 40, c.h - 8, 0xD8181818, 12);
             fill(c, 0, 4, 6, c.h - 8, toastColor, 0);
-            text(c, 22, c.h / 2 + 9, toastText, fs, kWhite);
+            text(c, 22, c.h / 2 + 8, toastText, fs, kWhite);
         }
         framebufferEnd(&g_toast.fb);
         g_toast.visible = toastOn;
@@ -271,17 +276,17 @@ inline void tick() {
 
     if (timerNeed && g_timer.ok) {
         u32 stride = 0;
-        u32 *px = static_cast<u32 *>(framebufferBegin(&g_timer.fb, &stride));
-        Canvas c{ px, stride / 4, g_timer.w, g_timer.h };
-        for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 4);
+        u16 *px = static_cast<u16 *>(framebufferBegin(&g_timer.fb, &stride));
+        Canvas c{ px, stride / 2, g_timer.w, g_timer.h };
+        for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 2);
         if (timerOn) {
-            const float fs = 26;
+            const float fs = 24;
             const int tw = textWidth(timerText, fs);
-            const int bw = tw + 58;
+            const int bw = tw + 52;
             const int bx = c.w - bw;
             fill(c, bx, 4, bw, c.h - 8, 0xB0000000, 12);
-            circle(c, bx + 22, c.h / 2, 8, kRed);
-            text(c, bx + 40, c.h / 2 + 9, timerText, fs, kWhite);
+            circle(c, bx + 20, c.h / 2, 7, kRed);
+            text(c, bx + 36, c.h / 2 + 8, timerText, fs, kWhite);
         }
         framebufferEnd(&g_timer.fb);
         g_timer.visible = timerOn;

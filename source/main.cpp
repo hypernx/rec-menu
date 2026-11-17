@@ -12,12 +12,13 @@ private:
     tsl::elm::ListItem *m_recItem = nullptr;
     tsl::elm::ListItem *m_timeItem = nullptr;
     tsl::elm::ListItem *m_shotItem = nullptr;
+    tsl::elm::ListItem *m_osdItem = nullptr;
 
 public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.6.0");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.6.1");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader("Recording  (save: /switch/rec-menu)"));
@@ -46,6 +47,11 @@ public:
             rec::state().showTimer = on;
         });
         list->addItem(timerToggle);
+
+        // タイマー/通知の表示が使えるか(うまく出ないときの確認用)
+        m_osdItem = new tsl::elm::ListItem("Notification display");
+        m_osdItem->setValue(osd::g_status);
+        list->addItem(m_osdItem);
 
         list->addItem(new tsl::elm::CategoryHeader("Capture"));
 
