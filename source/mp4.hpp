@@ -13,7 +13,7 @@ namespace mp4 {
 
 constexpr u32 kTimescale   = 1000000;   // 映像: マイクロ秒
 constexpr u32 kDefaultDur  = 33333;     // 30fps
-constexpr u32 kMaxSamples  = 64;        // 1フラグメントあたりの最大フレーム数(約2秒)
+constexpr u32 kMaxSamples  = 10;        // 1フラグメントあたりの最大フレーム数(約0.33秒。音声と細かく交互に並べる)
 constexpr u32 kAudioRate   = 48000;
 constexpr u32 kAudioFrame  = 4;         // 16bit x 2ch
 
@@ -303,23 +303,31 @@ inline u64 durationUs(const VideoTrack &w) {
 // 音声
 // ---------------------------------------------------------------------------
 
+// 音声は 1024サンプル(4096バイト)ごとに1つのMP4サンプルとして並べる
+// (1サンプル=4バイトにすると、再生側が1秒に48000個のパケットを扱うことになり重いため)
+constexpr u32 kAudioChunk = 1024;
+
 inline bool flushAudio(AudioTrack &a) {
     if (a.len == 0) return true;
-    const u32 count = u32(a.len / kAudioFrame);
+    const u32 frames = u32(a.len / kAudioFrame);
+    const u32 count = (frames + kAudioChunk - 1) / kAudioChunk;
 
-    u8 moofBuf[160];
+    static u8 moofBuf[192 + 8 * 64];
     Box b(moofBuf);
     size_t moof = b.open("moof");
     size_t mfhd = b.openFull("mfhd", 0, 0); b.u32_(++g_seq); b.close(mfhd);
     size_t traf = b.open("traf");
-    // default-base-is-moof + 既定の長さ(1サンプル) + 既定の大きさ(4バイト)
-    size_t tfhd = b.openFull("tfhd", 0, 0x020000 | 0x08 | 0x10);
-    b.u32_(2); b.u32_(1); b.u32_(kAudioFrame);
-    b.close(tfhd);
+    size_t tfhd = b.openFull("tfhd", 0, 0x020000); b.u32_(2); b.close(tfhd);   // default-base-is-moof
     size_t tfdt = b.openFull("tfdt", 1, 0); b.u64_(a.fragStart); b.close(tfdt);
-    size_t trun = b.openFull("trun", 0, 0x000001);   // data_offset のみ
+    size_t trun = b.openFull("trun", 0, 0x000301);   // data_offset + duration + size
     b.u32_(count);
     size_t dataOffsetAt = b.n; b.u32_(0);
+    for (u32 i = 0, left = frames; i < count; i++) {
+        const u32 f = left < kAudioChunk ? left : kAudioChunk;
+        b.u32_(f);
+        b.u32_(f * kAudioFrame);
+        left -= f;
+    }
     b.close(trun);
     b.close(traf);
     b.close(moof);
@@ -327,7 +335,7 @@ inline bool flushAudio(AudioTrack &a) {
     b.u32_(u32(a.len + 8)); b.bytes("mdat", 4);
 
     if (!a.write(moofBuf, b.n, a.buf, a.len)) return false;
-    a.fragStart += count;
+    a.fragStart += frames;
     a.len = 0;
     return true;
 }

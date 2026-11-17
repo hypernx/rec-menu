@@ -46,3 +46,24 @@ jobs:
           path: |
             tpl/*.ovl
             tpl/*.elf
+
+  gallery:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - name: Checkout (this repo)
+        uses: actions/checkout@v4
+
+      - name: Install libraries
+        run: dkp-pacman -S --needed --noconfirm switch-ffmpeg switch-sdl2 switch-sdl2_ttf || true
+
+      - name: Build Rec Gallery (NRO)
+        run: make -C gallery -j4
+
+      - name: Upload nro
+        uses: actions/upload-artifact@v4
+        with:
+          name: nro
+          path: |
+            gallery/RecGallery.nro
+            gallery/RecGallery.elf
