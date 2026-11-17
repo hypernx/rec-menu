@@ -37,7 +37,10 @@ jobs:
       - name: Build
         run: |
           cd tpl
-          make
+          VER=$(grep -oE '"v[0-9.]+"' ../src/source/main.cpp | head -1 | tr -d '"v')
+          echo "version: $VER"
+          # Ultrahandの一覧に「Rec Menu」とバージョンが出るようにする
+          make APP_TITLE="Rec Menu" APP_AUTHOR="hypernx" APP_VERSION="$VER"
 
       - name: Upload ovl
         uses: actions/upload-artifact@v4
