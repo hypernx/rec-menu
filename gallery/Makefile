@@ -17,10 +17,10 @@ DATA        := data
 INCLUDES    := include
 APP_TITLE   := Rec Gallery
 APP_AUTHOR  := hypernx
-APP_VERSION := 0.1.1
+APP_VERSION := 0.2.0
 
 PKGCONF := $(PORTLIBS)/bin/aarch64-none-elf-pkg-config
-PKGS    := SDL2_ttf sdl2 libavformat libavcodec libswscale libswresample libavutil
+PKGS    := SDL2_ttf SDL2_image sdl2 libavformat libavcodec libswscale libswresample libavutil
 
 #---------------------------------------------------------------------------------
 ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE

@@ -1,11 +1,14 @@
-// Rec Gallery - Rec Menu で撮った動画(/switch/rec-menu/*.mp4)を、アルバムのように一覧・再生・削除する
+// Rec Gallery - Rec Menu で撮った動画(*.mp4)と写真(*.jpg)を、アルバムのように一覧・再生・削除する
 //
 // 操作:
-//   一覧   … 十字キー/スティック: 選択   A: 再生   X: 削除   +/B: 終了
-//   再生中 … A: 一時停止/再開   ←/→: 10秒戻る/進む   L/R: 30秒戻る/進む   B: 一覧に戻る
+//   一覧   … 十字キー: 選択   A: 再生/表示   X: 削除   L/R: 動画⇔写真   −: 並び替え   Y: 更新   +/B: 終了
+//   動画   … A: 一時停止/再開   ←/→: 10秒戻る/進む   L/R: 30秒戻る/進む   B: 一覧に戻る
+//   写真   … ←/→: 前/次   X: 削除   B: 一覧に戻る
 #include <switch.h>
 #include <SDL.h>
 #include <SDL_ttf.h>
+#include <SDL_image.h>
+#include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <cstdio>
@@ -132,8 +135,12 @@ static Input readInput() {
 }
 
 // ---------------------------------------------------------------------------
-// 動画ファイル一覧
+// ファイル一覧(動画 / 写真)
 // ---------------------------------------------------------------------------
+enum Tab { TabVideo = 0, TabPhoto = 1 };
+enum SortMode { SortNewest = 0, SortOldest, SortLargest, SortSmallest, SortCount };
+static const char *kSortNames[SortCount] = { "新しい順", "古い順", "大きい順", "小さい順" };
+
 struct Entry {
     std::string path, name;
     s64 size = 0;
@@ -143,15 +150,31 @@ struct Entry {
     double duration = -1;
     bool hasAudio = false;
 };
-static std::vector<Entry> g_entries;
+static std::vector<Entry> g_lists[2];   // [TabVideo], [TabPhoto]
+static Tab g_tab = TabVideo;
+static SortMode g_sort = SortNewest;
 
-static void freeEntries() {
-    for (auto &e : g_entries) if (e.thumb) SDL_DestroyTexture(e.thumb);
-    g_entries.clear();
+static std::vector<Entry> &cur() { return g_lists[g_tab]; }
+
+static void freeList(std::vector<Entry> &v) {
+    for (auto &e : v) if (e.thumb) SDL_DestroyTexture(e.thumb);
+    v.clear();
 }
 
-static void scanDir() {
-    freeEntries();
+static void sortList(std::vector<Entry> &v) {
+    std::stable_sort(v.begin(), v.end(), [](const Entry &a, const Entry &b) {
+        switch (g_sort) {
+            case SortOldest:   if (a.mtime != b.mtime) return a.mtime < b.mtime; return a.name < b.name;
+            case SortLargest:  if (a.size != b.size) return a.size > b.size; return a.name > b.name;
+            case SortSmallest: if (a.size != b.size) return a.size < b.size; return a.name < b.name;
+            default:           if (a.mtime != b.mtime) return a.mtime > b.mtime; return a.name > b.name;
+        }
+    });
+}
+
+static void scanDir(Tab tab) {
+    std::vector<Entry> &list = g_lists[tab];
+    freeList(list);
     DIR *d = opendir(kDir);
     if (!d) return;
     while (dirent *de = readdir(d)) {
@@ -159,22 +182,57 @@ static void scanDir() {
         if (n.size() < 5) continue;
         std::string ext = n.substr(n.size() - 4);
         for (auto &ch : ext) ch = char(tolower(ch));
-        if (ext != ".mp4") continue;
+        const bool want = tab == TabVideo ? ext == ".mp4" : (ext == ".jpg" || ext == "jpeg");
+        if (!want) continue;
         Entry e;
         e.name = n;
         e.path = std::string(kDir) + "/" + n;
         struct stat st;
         if (stat(e.path.c_str(), &st) == 0) { e.size = st.st_size; e.mtime = st.st_mtime; }
-        g_entries.push_back(std::move(e));
+        list.push_back(std::move(e));
     }
     closedir(d);
-    // 新しい番号が先頭に来るように
-    std::sort(g_entries.begin(), g_entries.end(), [](const Entry &a, const Entry &b) { return a.name > b.name; });
+    sortList(list);
 }
 
-// 最初の1フレームを縮小してサムネイルにする
-static void makeThumb(Entry &e) {
-    e.thumbTried = true;
+static std::string fmtDate(time_t t) {
+    if (t <= 0) return "日付不明";
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y/%m/%d %H:%M", &tmv);
+    return buf;
+}
+
+constexpr int kThumbW = 288, kThumbH = 162;
+
+// 画像を読み込んで、指定の大きさに縮小したテクスチャを作る(縦横比は保って中央に置く)
+static SDL_Texture *loadImageTexture(const std::string &path, int w, int h) {
+    SDL_Surface *src = IMG_Load(path.c_str());
+    if (!src) return nullptr;
+    SDL_Surface *rgba = SDL_ConvertSurfaceFormat(src, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(src);
+    if (!rgba) return nullptr;
+    if (w <= 0 || h <= 0) {   // 原寸
+        SDL_Texture *t = SDL_CreateTextureFromSurface(g_ren, rgba);
+        SDL_FreeSurface(rgba);
+        return t;
+    }
+    SDL_Surface *dst = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!dst) { SDL_FreeSurface(rgba); return nullptr; }
+    SDL_FillRect(dst, nullptr, SDL_MapRGBA(dst->format, 0, 0, 0, 255));
+    const double sc = std::min(double(w) / rgba->w, double(h) / rgba->h);
+    SDL_Rect r{ 0, 0, int(rgba->w * sc), int(rgba->h * sc) };
+    r.x = (w - r.w) / 2; r.y = (h - r.h) / 2;
+    SDL_BlitScaled(rgba, nullptr, dst, &r);
+    SDL_FreeSurface(rgba);
+    SDL_Texture *t = SDL_CreateTextureFromSurface(g_ren, dst);
+    SDL_FreeSurface(dst);
+    return t;
+}
+
+// 動画は最初の1フレームを縮小してサムネイルにする
+static void makeVideoThumb(Entry &e) {
     AVFormatContext *fmt = nullptr;
     if (avformat_open_input(&fmt, avPath(e.path).c_str(), nullptr, nullptr) < 0) return;
     if (avformat_find_stream_info(fmt, nullptr) < 0) { avformat_close_input(&fmt); return; }
@@ -201,23 +259,28 @@ static void makeThumb(Entry &e) {
         got = avcodec_receive_frame(dec, frame) >= 0;
     }
     if (got) {
-        const int tw = 288, th = 162;
         SwsContext *sws = sws_getContext(frame->width, frame->height, AVPixelFormat(frame->format),
-                                         tw, th, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                         kThumbW, kThumbH, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (sws) {
-            std::vector<u8> rgba(size_t(tw) * th * 4);
+            std::vector<u8> rgba(size_t(kThumbW) * kThumbH * 4);
             u8 *dst[4] = { rgba.data(), nullptr, nullptr, nullptr };
-            int dstStride[4] = { tw * 4, 0, 0, 0 };
+            int dstStride[4] = { kThumbW * 4, 0, 0, 0 };
             sws_scale(sws, frame->data, frame->linesize, 0, frame->height, dst, dstStride);
             sws_freeContext(sws);
-            e.thumb = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, tw, th);
-            if (e.thumb) SDL_UpdateTexture(e.thumb, nullptr, rgba.data(), tw * 4);
+            e.thumb = SDL_CreateTexture(g_ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, kThumbW, kThumbH);
+            if (e.thumb) SDL_UpdateTexture(e.thumb, nullptr, rgba.data(), kThumbW * 4);
         }
     }
     av_frame_free(&frame);
     av_packet_free(&pkt);
     avcodec_free_context(&dec);
     avformat_close_input(&fmt);
+}
+
+static void makeThumb(Entry &e, Tab tab) {
+    e.thumbTried = true;
+    if (tab == TabPhoto) e.thumb = loadImageTexture(e.path, kThumbW, kThumbH);
+    else makeVideoThumb(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,30 +592,103 @@ static void playVideo(const Entry &e) {
 }
 
 // ---------------------------------------------------------------------------
+// 写真の表示
+// ---------------------------------------------------------------------------
+static void drawList(int sel, int scrollRow, const std::string &toast, u64 toastUntil);
+static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPhoto, SDL_Texture *photo);
+static bool deleteEntry(int &sel, std::string &toast);
+
+// 写真を全画面で表示する。←→で前後の写真へ。戻ったときの選択位置を sel に返す
+static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
+    SDL_Texture *tex = nullptr;
+    int loaded = -1;
+    u64 osdUntil = nowMs() + 2500;
+    while (appletMainLoop()) {
+        g_frameNo++;
+        std::vector<Entry> &list = cur();
+        if (list.empty()) break;
+        if (sel >= int(list.size())) sel = int(list.size()) - 1;
+        if (loaded != sel) {
+            if (tex) SDL_DestroyTexture(tex);
+            tex = loadImageTexture(list[sel].path, 0, 0);
+            loaded = sel;
+        }
+
+        Input in = readInput();
+        if (in.down & HidNpadButton_B) break;
+        if ((in.repeat & HidNpadButton_AnyRight) || (in.down & HidNpadButton_R)) { if (sel + 1 < int(list.size())) sel++; osdUntil = nowMs() + 2500; }
+        if ((in.repeat & HidNpadButton_AnyLeft) || (in.down & HidNpadButton_L))  { if (sel > 0) sel--; osdUntil = nowMs() + 2500; }
+        if (in.down & (HidNpadButton_A | HidNpadButton_AnyUp | HidNpadButton_AnyDown)) osdUntil = nowMs() + 2500;
+        if (in.down & HidNpadButton_X) {
+            if (confirmDelete(sel, 0, "この写真を削除しますか？", true, tex)) {
+                deleteEntry(sel, toast);
+                toastUntil = nowMs() + 2500;
+                loaded = -1;
+                osdUntil = nowMs() + 2500;
+            }
+            padUpdate(&g_pad);
+            continue;
+        }
+
+        SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
+        SDL_RenderClear(g_ren);
+        if (tex) {
+            int tw = 0, th = 0;
+            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            const double sc = std::min(double(W) / tw, double(H) / th);
+            SDL_Rect r{ 0, 0, int(tw * sc), int(th * sc) };
+            r.x = (W - r.w) / 2; r.y = (H - r.h) / 2;
+            SDL_RenderCopy(g_ren, tex, nullptr, &r);
+        } else {
+            drawText(g_fontM, "読み込めません", W / 2, H / 2 - 16, kRed, Center);
+        }
+        if (nowMs() < osdUntil) {
+            const Entry &e = list[sel];
+            fillRect(0, 0, W, 64, 0, 0, 0, 160);
+            drawText(g_fontM, e.name, 30, 16, kWhite);
+            char pos[32];
+            snprintf(pos, sizeof(pos), "%d / %d", sel + 1, int(list.size()));
+            drawText(g_fontS, pos, W - 30, 22, kGray, Right);
+            fillRect(0, H - 56, W, 56, 0, 0, 0, 160);
+            char info[96];
+            snprintf(info, sizeof(info), "%s    %.1f MB", fmtDate(e.mtime).c_str(), e.size / 1048576.0);
+            drawText(g_fontS, info, 30, H - 42, kGray);
+            drawText(g_fontS, "←→: 前/次    X: 削除    B: 戻る", W - 30, H - 42, kWhite, Right);
+        }
+        SDL_RenderPresent(g_ren);
+        trimTextCache();
+    }
+    if (tex) SDL_DestroyTexture(tex);
+}
+
+// ---------------------------------------------------------------------------
 // 一覧画面
 // ---------------------------------------------------------------------------
 constexpr int kCols = 4;
 constexpr int kCellW = 300, kCellH = 222;
-constexpr int kGridX = (W - kCols * kCellW) / 2, kGridY = 84;
-constexpr int kThumbW = 288, kThumbH = 162;
+constexpr int kGridX = (W - kCols * kCellW) / 2, kGridY = 120;
 constexpr int kVisibleRows = 3;
 
-static void drawList(int sel, int scrollRow, const std::string &toast, u64 toastUntil);
-
-static bool confirmDelete(int sel, int scrollRow) {
-    const Entry &e = g_entries[sel];
+static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPhoto, SDL_Texture *photo) {
+    const Entry &e = cur()[sel];
     while (appletMainLoop()) {
         g_frameNo++;
         Input in = readInput();
         if (in.down & HidNpadButton_A) return true;
         if (in.down & (HidNpadButton_B | HidNpadButton_X)) return false;
 
-        drawList(sel, scrollRow, "", 0);
+        if (overPhoto) {
+            SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
+            SDL_RenderClear(g_ren);
+            if (photo) SDL_RenderCopy(g_ren, photo, nullptr, nullptr);
+        } else {
+            drawList(sel, scrollRow, "", 0);
+        }
         fillRect(0, 0, W, H, 0, 0, 0, 150);
         const int bw = 640, bh = 240, bx = (W - bw) / 2, by = (H - bh) / 2;
         fillRect(bx, by, bw, bh, 40, 40, 44);
         strokeRect(bx, by, bw, bh, 2, 90, 90, 96);
-        drawText(g_fontM, "この動画を削除しますか？", W / 2, by + 40, kWhite, Center);
+        drawText(g_fontM, what, W / 2, by + 40, kWhite, Center);
         drawText(g_fontS, e.name, W / 2, by + 92, kGray, Center);
         drawText(g_fontM, "A: 削除する", W / 2 - 140, by + 160, kRed, Center);
         drawText(g_fontM, "B: やめる", W / 2 + 140, by + 160, kWhite, Center);
@@ -561,25 +697,51 @@ static bool confirmDelete(int sel, int scrollRow) {
     return false;
 }
 
+static bool deleteEntry(int &sel, std::string &toast) {
+    std::vector<Entry> &list = cur();
+    const std::string name = list[sel].name;
+    if (remove(list[sel].path.c_str()) != 0) {
+        toast = "削除できませんでした";
+        return false;
+    }
+    if (list[sel].thumb) SDL_DestroyTexture(list[sel].thumb);
+    list.erase(list.begin() + sel);
+    if (sel >= int(list.size())) sel = std::max(0, int(list.size()) - 1);
+    toast = name + " を削除しました";
+    return true;
+}
+
 static void drawList(int sel, int scrollRow, const std::string &toast, u64 toastUntil) {
+    const std::vector<Entry> &list = cur();
     SDL_SetRenderDrawColor(g_ren, 24, 24, 28, 255);
     SDL_RenderClear(g_ren);
 
     // ヘッダー
-    fillRect(0, 0, W, 68, 36, 36, 42);
-    drawText(g_fontL, "Rec Gallery", 36, 12, kWhite);
-    char cnt[64];
-    snprintf(cnt, sizeof(cnt), "%d 本の動画", int(g_entries.size()));
-    drawText(g_fontS, cnt, W - 36, 24, kGray, Right);
+    fillRect(0, 0, W, 104, 36, 36, 42);
+    drawText(g_fontL, "Rec Gallery", 36, 10, kWhite);
+    char sortLabel[64];
+    snprintf(sortLabel, sizeof(sortLabel), "並び順: %s  (−で変更)", kSortNames[g_sort]);
+    drawText(g_fontS, sortLabel, W - 36, 20, kGray, Right);
 
-    if (g_entries.empty()) {
-        drawText(g_fontM, "動画がありません", W / 2, H / 2 - 40, kWhite, Center);
-        drawText(g_fontS, "Rec Menu で録画すると /switch/rec-menu/ に保存され、ここに出てきます", W / 2, H / 2 + 10,
+    // タブ
+    const char *tabNames[2] = { "動画", "写真" };
+    for (int t = 0; t < 2; t++) {
+        char label[32];
+        snprintf(label, sizeof(label), "%s (%d)", tabNames[t], int(g_lists[t].size()));
+        const int tx = 36 + t * 180;
+        drawText(g_fontM, label, tx + 80, 62, t == g_tab ? kWhite : kGray, Center);
+        if (t == g_tab) fillRect(tx + 10, 98, 140, 4, 0, 220, 200);
+    }
+    drawText(g_fontS, "L/R: 切り替え", 36 + 2 * 180 + 10, 68, kGray);
+
+    if (list.empty()) {
+        drawText(g_fontM, g_tab == TabVideo ? "動画がありません" : "写真がありません", W / 2, H / 2 - 30, kWhite, Center);
+        drawText(g_fontS, "Rec Menu で撮ると /switch/rec-menu/ に保存され、ここに出てきます", W / 2, H / 2 + 20,
                  kGray, Center);
     }
 
-    for (int i = scrollRow * kCols; i < int(g_entries.size()) && i < (scrollRow + kVisibleRows) * kCols; i++) {
-        const Entry &e = g_entries[i];
+    for (int i = scrollRow * kCols; i < int(list.size()) && i < (scrollRow + kVisibleRows) * kCols; i++) {
+        const Entry &e = list[i];
         const int row = i / kCols - scrollRow, col = i % kCols;
         const int x = kGridX + col * kCellW + (kCellW - kThumbW) / 2;
         const int y = kGridY + row * kCellH;
@@ -591,25 +753,26 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
             drawText(g_fontS, e.thumbTried ? "読み込めません" : "読み込み中…", x + kThumbW / 2, y + kThumbH / 2 - 12,
                      kGray, Center);
         }
-        if (e.duration >= 0) {
+        if (g_tab == TabVideo && e.duration >= 0) {
             const std::string d = fmtTime(e.duration);
             fillRect(x + kThumbW - 74, y + kThumbH - 30, 70, 26, 0, 0, 0, 170);
             drawText(g_fontS, d, x + kThumbW - 39, y + kThumbH - 29, kWhite, Center);
         }
-        drawText(g_fontS, e.name, x, y + kThumbH + 8, i == sel ? kWhite : kGray);
+        drawText(g_fontS, fmtDate(e.mtime), x, y + kThumbH + 8, i == sel ? kWhite : kGray);
         if (i == sel) strokeRect(x - 6, y - 6, kThumbW + 12, kThumbH + 12, 4, 0, 220, 200);
     }
 
     // フッター
     fillRect(0, H - 48, W, 48, 36, 36, 42);
-    if (!g_entries.empty() && sel < int(g_entries.size())) {
-        const Entry &e = g_entries[sel];
-        char info[96];
-        snprintf(info, sizeof(info), "%.1f MB%s", e.size / 1048576.0,
-                 !e.thumbTried ? "" : (e.hasAudio ? "   音声あり" : "   音声なし"));
+    if (!list.empty() && sel < int(list.size())) {
+        const Entry &e = list[sel];
+        char info[160];
+        snprintf(info, sizeof(info), "%s   %.1f MB%s", e.name.c_str(), e.size / 1048576.0,
+                 g_tab != TabVideo || !e.thumbTried ? "" : (e.hasAudio ? "   音声あり" : "   音声なし"));
         drawText(g_fontS, info, 36, H - 38, kGray);
     }
-    drawText(g_fontS, "A: 再生    X: 削除    Y: 更新    +: 終了", W - 36, H - 38, kWhite, Right);
+    drawText(g_fontS, g_tab == TabVideo ? "A: 再生   X: 削除   Y: 更新   +: 終了" : "A: 表示   X: 削除   Y: 更新   +: 終了",
+             W - 36, H - 38, kWhite, Right);
 
     if (!toast.empty() && nowMs() < toastUntil) {
         fillRect(W / 2 - 300, H - 120, 600, 52, 0, 0, 0, 200);
@@ -618,58 +781,74 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
 }
 
 static void galleryLoop() {
-    int sel = 0, scrollRow = 0;
+    int sel[2] = { 0, 0 }, scrollRow[2] = { 0, 0 };
     std::string toast;
     u64 toastUntil = 0;
-    scanDir();
+    scanDir(TabVideo);
+    scanDir(TabPhoto);
 
     while (appletMainLoop() && !g_quit) {
         g_frameNo++;
         Input in = readInput();
-        const int n = int(g_entries.size());
+        int &s = sel[g_tab];
+        int &sr = scrollRow[g_tab];
+        std::vector<Entry> &list = cur();
+        const int n = int(list.size());
 
-        if (in.down & HidNpadButton_Plus) break;
-        if (in.down & HidNpadButton_B) break;
-        if (in.down & HidNpadButton_Y) { scanDir(); sel = 0; scrollRow = 0; }
+        if (in.down & (HidNpadButton_Plus | HidNpadButton_B)) break;
+        if (in.down & HidNpadButton_Y) { scanDir(g_tab); s = 0; sr = 0; continue; }
+        if (in.down & (HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL | HidNpadButton_ZR)) {
+            g_tab = g_tab == TabVideo ? TabPhoto : TabVideo;
+            continue;
+        }
+        if (in.down & HidNpadButton_Minus) {
+            g_sort = SortMode((g_sort + 1) % SortCount);
+            sortList(g_lists[0]);
+            sortList(g_lists[1]);
+            sel[0] = sel[1] = 0;
+            scrollRow[0] = scrollRow[1] = 0;
+            toast = std::string("並び順: ") + kSortNames[g_sort];
+            toastUntil = nowMs() + 1500;
+            continue;
+        }
 
         if (n > 0) {
-            if (in.repeat & HidNpadButton_AnyRight) sel = std::min(sel + 1, n - 1);
-            if (in.repeat & HidNpadButton_AnyLeft)  sel = std::max(sel - 1, 0);
-            if (in.repeat & HidNpadButton_AnyDown)  sel = std::min(sel + kCols, n - 1);
-            if (in.repeat & HidNpadButton_AnyUp)    sel = std::max(sel - kCols, 0);
-            const int row = sel / kCols;
-            if (row < scrollRow) scrollRow = row;
-            if (row >= scrollRow + kVisibleRows) scrollRow = row - kVisibleRows + 1;
+            if (in.repeat & HidNpadButton_AnyRight) s = std::min(s + 1, n - 1);
+            if (in.repeat & HidNpadButton_AnyLeft)  s = std::max(s - 1, 0);
+            if (in.repeat & HidNpadButton_AnyDown)  s = std::min(s + kCols, n - 1);
+            if (in.repeat & HidNpadButton_AnyUp)    s = std::max(s - kCols, 0);
 
             if (in.down & HidNpadButton_A) {
-                playVideo(g_entries[sel]);
+                if (g_tab == TabVideo) playVideo(list[s]);
+                else viewPhotos(s, toast, toastUntil);
                 padUpdate(&g_pad);   // 再生画面で押したボタンを持ち越さない
-                continue;
-            }
-            if (in.down & HidNpadButton_X) {
-                if (confirmDelete(sel, scrollRow)) {
-                    const std::string name = g_entries[sel].name;
-                    if (remove(g_entries[sel].path.c_str()) == 0) {
-                        if (g_entries[sel].thumb) SDL_DestroyTexture(g_entries[sel].thumb);
-                        g_entries.erase(g_entries.begin() + sel);
-                        if (sel >= int(g_entries.size())) sel = std::max(0, int(g_entries.size()) - 1);
-                        toast = name + " を削除しました";
-                    } else {
-                        toast = "削除できませんでした";
-                    }
+            } else if (in.down & HidNpadButton_X) {
+                if (confirmDelete(s, sr, g_tab == TabVideo ? "この動画を削除しますか？" : "この写真を削除しますか？", false, nullptr)) {
+                    deleteEntry(s, toast);
                     toastUntil = nowMs() + 2500;
                 }
                 padUpdate(&g_pad);
-                continue;
+            }
+        }
+        // 選んでいる物が画面に入るようにスクロール
+        const int n2 = int(cur().size());
+        if (s >= n2) s = std::max(0, n2 - 1);
+        const int row = s / kCols;
+        if (row < sr) sr = row;
+        if (row >= sr + kVisibleRows) sr = row - kVisibleRows + 1;
+
+        // サムネイルは1フレームに1つずつ作る(画面が固まらないように)。見えている物を優先
+        std::vector<Entry> &l2 = cur();
+        for (int i = sr * kCols; i < n2 && i < (sr + kVisibleRows + 1) * kCols; i++) {
+            if (!l2[i].thumbTried) {
+                drawList(s, sr, toast, toastUntil);
+                SDL_RenderPresent(g_ren);
+                makeThumb(l2[i], g_tab);
+                break;
             }
         }
 
-        // サムネイルは1フレームに1つずつ作る(画面が固まらないように)。見えている物を優先
-        for (int i = scrollRow * kCols; i < n && i < (scrollRow + kVisibleRows + 1) * kCols; i++) {
-            if (!g_entries[i].thumbTried) { drawList(sel, scrollRow, toast, toastUntil); SDL_RenderPresent(g_ren); makeThumb(g_entries[i]); break; }
-        }
-
-        drawList(sel, scrollRow, toast, toastUntil);
+        drawList(s, sr, toast, toastUntil);
         SDL_RenderPresent(g_ren);
         trimTextCache();
     }
@@ -695,10 +874,13 @@ int main(int argc, char **argv) {
     }
     if (!g_fontL || !g_fontM || !g_fontS) return 1;
 
+    IMG_Init(IMG_INIT_JPG | IMG_INIT_PNG);
     av_log_set_level(AV_LOG_QUIET);
     galleryLoop();
 
-    freeEntries();
+    freeList(g_lists[0]);
+    freeList(g_lists[1]);
+    IMG_Quit();
     for (auto &kv : g_textCache) SDL_DestroyTexture(kv.second.tex);
     g_textCache.clear();
     TTF_CloseFont(g_fontL); TTF_CloseFont(g_fontM); TTF_CloseFont(g_fontS);

@@ -45,12 +45,16 @@ struct State {
     u32 nextRecIndex = 0;
     char recPath[64] = {};
     std::string recMsg = "Ready";
+    u64 msgExpireMs = 0;        // この時刻を過ぎたら recMsg を消す(0なら消さない)
+    std::atomic<bool> stoppedBySleep{false};
 };
 
 inline State &state() {
     static State s;
     return s;
 }
+
+inline void initSleepWatch();
 
 // initServices の中(smセッション内)から呼ぶ
 inline void init() {
@@ -63,6 +67,7 @@ inline void init() {
         s.shotMsg = buf;
     }
     // 注意: ここではSDカードがまだマウントされていないので、SDには触らない。
+    initSleepWatch();
 }
 
 inline bool isRecording() { return state().recording; }
@@ -208,7 +213,7 @@ inline void closeFile() {
 }
 
 // 録画開始。メインスレッドから呼ぶ
-inline bool start() {
+inline bool startLocked() {
     State &s = state();
     char buf[48];
     if (s.recording) return true;
@@ -298,12 +303,14 @@ inline bool start() {
     }
 
     s.startTick = armGetSystemTick();
+    s.stoppedBySleep = false;
+    s.msgExpireMs = 0;
     s.recMsg = "Recording";
     return true;
 }
 
 // 録画停止。メインスレッドから呼ぶ
-inline void stop() {
+inline void stopLocked(bool bySleep) {
     State &s = state();
     if (!s.vThreadValid && !s.aThreadValid) return;
     s.stopRequest = true;
@@ -312,6 +319,8 @@ inline void stop() {
     done = joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL) && done;
     if (done) closeFile();
     s.recording = false;
+    s.stoppedBySleep = bySleep;
+    s.msgExpireMs = 0;
 
     char buf[48];
     if (s.lastError != 0) {
@@ -326,28 +335,115 @@ inline void stop() {
             if (s.audioError) snprintf(snd, sizeof(snd), " snd:%04u-%04u", 2000 + R_MODULE(s.audioError.load()), R_DESCRIPTION(s.audioError.load()));
             else if (s.audioPackets == 0) snprintf(snd, sizeof(snd), " snd:0");
             else snd[0] = 0;
-            snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB%s", sec / 60, sec % 60,
+            snprintf(buf, sizeof(buf), "Saved%s %u:%02u %.1fMB%s", bySleep ? "(sleep)" : "", sec / 60, sec % 60,
                      s.bytesWritten.load() / 1048576.0, snd);
+            s.msgExpireMs = nowMs() + 3000;
         }
         s.recMsg = buf;
     }
 }
 
-// 録画スレッドがエラーで勝手に止まったときの後始末(毎フレーム呼んでよい)
+inline u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
+
+static Mutex g_ctrlLock;   // start / stop を同時に走らせない(スリープ検知は別スレッドから止める)
+
+inline bool start() {
+    mutexLock(&g_ctrlLock);
+    bool ok = startLocked();
+    mutexUnlock(&g_ctrlLock);
+    return ok;
+}
+
+inline void stop(bool bySleep = false) {
+    mutexLock(&g_ctrlLock);
+    stopLocked(bySleep);
+    mutexUnlock(&g_ctrlLock);
+}
+
+// 毎フレーム呼ぶ。録画スレッドがエラーで止まったときや、停止に時間がかかったときの後始末
 inline void poll() {
     State &s = state();
-    if (s.recording && s.stopRequest.load()) stop();
+    mutexLock(&g_ctrlLock);
+    if (s.recording && s.stopRequest.load()) stopLocked(false);
+    // 停止時にスレッドが終わりきっていなかった場合、終わったらファイルを閉じる
+    if (!s.recording && s.fileOpen &&
+        joinThread(s.vThread, s.vThreadValid, 0) && joinThread(s.aThread, s.aThreadValid, 0))
+        closeFile();
+    mutexUnlock(&g_ctrlLock);
+}
+
+// ---------------------------------------------------------------------------
+// スリープ検知: 録画中にスリープしたら自動で停止してファイルを閉じる
+// (psc:m に登録すると、スリープ/電源オフの直前に通知が来る)
+// ---------------------------------------------------------------------------
+constexpr u32 kPscModuleId = 0x524D;   // 他と重ならない適当な番号
+static PscPmModule g_psc;
+static bool g_pscOk = false;
+static Thread g_pscThread;
+static std::atomic<bool> g_pscRun{false};
+
+inline void pscThreadMain(void *) {
+    while (g_pscRun) {
+        if (R_FAILED(eventWait(&g_psc.event, 200'000'000ULL))) continue;   // 0.2秒ごとに終了確認
+        PscPmState st;
+        u32 flags;
+        if (R_FAILED(pscPmModuleGetRequest(&g_psc, &st, &flags))) continue;
+        if (st == PscPmState_ReadySleep || st == PscPmState_ReadyShutdown) {
+            if (state().recording) stop(true);
+        }
+        pscPmModuleAcknowledge(&g_psc, st);
+    }
+}
+
+// initServices の中(smセッション内)から呼ぶ
+inline void initSleepWatch() {
+    mutexInit(&g_ctrlLock);
+    if (R_FAILED(pscmInitialize())) return;
+    const u32 deps[] = { PscPmModuleId_Fs };   // SDカードが止まる前に通知してもらう
+    if (R_FAILED(pscmGetPmModule(&g_psc, PscPmModuleId(kPscModuleId), deps, 1, true))) { pscmExit(); return; }
+    g_pscRun = true;
+    if (R_FAILED(threadCreate(&g_pscThread, pscThreadMain, nullptr, nullptr, 0x2000, 0x2C, -2)) ||
+        R_FAILED(threadStart(&g_pscThread))) {
+        g_pscRun = false;
+        pscPmModuleFinalize(&g_psc);
+        pscPmModuleClose(&g_psc);
+        pscmExit();
+        return;
+    }
+    g_pscOk = true;
+}
+
+inline void exitSleepWatch() {
+    if (!g_pscOk) return;
+    g_pscRun = false;
+    threadWaitForExit(&g_pscThread);
+    threadClose(&g_pscThread);
+    pscPmModuleFinalize(&g_psc);
+    pscPmModuleClose(&g_psc);
+    pscmExit();
+    g_pscOk = false;
 }
 
 inline void shutdown() {
     State &s = state();
+    exitSleepWatch();
     if (s.recording) stop();
     if (serviceIsActive(&g_grcdVideo)) serviceClose(&g_grcdVideo);
     if (serviceIsActive(&g_grcdAudio)) serviceClose(&g_grcdAudio);
     if (s.capsReady) capsscExit();
 }
 
-inline const std::string &recStatus() { return state().recMsg; }
+// 「Saved …」は3秒たったら消して Ready に戻す
+inline const std::string &recStatus() {
+    State &s = state();
+    static const std::string ready = "Ready";
+    if (s.msgExpireMs != 0 && nowMs() > s.msgExpireMs) {
+        s.recMsg = ready;
+        s.msgExpireMs = 0;
+    }
+    return s.recMsg;
+}
+
 
 // ---------------------------------------------------------------------------
 // スクリーンショット

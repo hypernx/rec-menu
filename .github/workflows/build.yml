@@ -58,7 +58,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install libraries
-        run: dkp-pacman -S --needed --noconfirm switch-ffmpeg switch-sdl2 switch-sdl2_ttf || true
+        run: dkp-pacman -S --needed --noconfirm switch-ffmpeg switch-sdl2 switch-sdl2_ttf switch-sdl2_image || true
 
       - name: Build Rec Gallery (NRO)
         run: make -C gallery -j4

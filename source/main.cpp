@@ -72,6 +72,13 @@ public:
 
     void update() override {
         rec::poll();
+        // スリープで録画が止まった → メニューは出さずに隠れる(起きたときにゲームの邪魔をしない)
+        if (!rec::isRecording() && rec::state().stoppedBySleep && hud::active) {
+            hud::leave(false);
+            tsl::goBack();
+            tsl::Overlay::get()->hide();
+            return;
+        }
         // HOMEボタンなどでHUDが解除された / 録画が止まった → メニューに戻る
         if (!hud::active || !rec::isRecording()) {
             hud::leave(true);
@@ -110,7 +117,7 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.4.2");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.5.0");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader("Recording  (save: /switch/rec-menu)"));
