@@ -32,8 +32,7 @@ jobs:
       - name: Replace sources
         run: |
           rm -rf tpl/source/*
-          cp src/source/main.cpp tpl/source/
-          cp src/source/recorder.hpp tpl/source/
+          cp src/source/*.cpp src/source/*.hpp tpl/source/
 
       - name: Build
         run: |

@@ -5,11 +5,12 @@
 #include <cstring>
 #include <atomic>
 #include <sys/stat.h>
+#include "mp4.hpp"
 
 // 録画・スクリーンショットのバックエンド。
 // - スクリーンショット: capssc(caps:sc)でJPEGを取得し、SDカードに保存する。
 // - 録画: grc:d(ゲームの動画キャプチャ用ストリーム)からH.264映像を受け取り、
-//         sdmc:/switch/rec-menu/rec_00000.h264 に書き出す(映像のみ・音声なし)。
+//         MP4にして sdmc:/switch/rec-menu/rec_00000.mp4 に書き出す(映像のみ・音声なし)。
 //   grc:d の使い方は SysDVR(exelix11/SysDVR)の実装に合わせている。
 namespace rec {
 
@@ -35,6 +36,7 @@ struct State {
     FsFile file{};
     s64 fileOffset = 0;
     std::atomic<u64> bytesWritten{0};
+    std::atomic<u64> recordedUs{0};     // 動画として書けた長さ
     std::atomic<u32> lastError{0};
     u32 nextRecIndex = 0;
     char recPath[64] = {};
@@ -71,55 +73,36 @@ constexpr Result GRCD_NOT_INITIALIZED = 0x3E8D4;
 constexpr Result GRCD_BUFFER_TOO_SMALL = 0xCD4;
 constexpr u64 SYSDVR_PROGRAM_ID = 0x00FF0000A53BB665ULL;
 
-// SysDVR と同じSPS/PPS。GRCはゲーム起動時に一度しか出さないので、
-// 先頭と数回に一度のIDRフレームの前に付け足して、途中からでも再生できるようにする
+// SysDVR と同じSPS/PPS(1280x720 / H.264 High)。GRCはゲーム起動時に一度しか出さないので、
+// MP4のヘッダ(avcC)にはこの値を入れる
 static const u8 kSPS[] = { 0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x0C, 0x20, 0xAC, 0x2B,
                            0x40, 0x28, 0x02, 0xDD, 0x35, 0x01, 0x0D, 0x01, 0xE0, 0x80 };
 static const u8 kPPS[] = { 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x3C, 0xB0 };
 
 constexpr size_t kXferSize  = 0x54000;   // SysDVRと同じサイズ
-constexpr size_t kWriteSize = 0x40000;   // まとめ書き用(256KB)。オーバーレイはメモリが少ないので控えめに
+constexpr size_t kWriteSize = 0x58000;   // MP4の1かたまり分(1フレームより大きい必要がある)
 
 alignas(0x1000) static u8 g_xferBuf[kXferSize];
 alignas(0x1000) static u8 g_writeBuf[kWriteSize];
-static size_t g_writeLen = 0;
+static mp4::Writer g_mp4;
 
-inline bool flushWriteBuf() {
+inline bool fileWrite(const void *data, size_t size) {
     State &s = state();
-    if (g_writeLen == 0) return true;
-    Result rc = fsFileWrite(&s.file, s.fileOffset, g_writeBuf, g_writeLen, FsWriteOption_None);
-    if (R_FAILED(rc)) {
-        s.lastError = rc;
-        return false;
-    }
-    s.fileOffset += g_writeLen;
-    s.bytesWritten += g_writeLen;
-    g_writeLen = 0;
-    return true;
-}
-
-inline bool appendData(const void *data, size_t size) {
-    if (g_writeLen + size > kWriteSize) {
-        if (!flushWriteBuf()) return false;
-    }
-    if (size > kWriteSize) {  // 起こらないはずだが念のため直接書く
-        State &s = state();
-        Result rc = fsFileWrite(&s.file, s.fileOffset, data, size, FsWriteOption_None);
-        if (R_FAILED(rc)) { s.lastError = rc; return false; }
-        s.fileOffset += size;
-        s.bytesWritten += size;
-        return true;
-    }
-    std::memcpy(g_writeBuf + g_writeLen, data, size);
-    g_writeLen += size;
+    Result rc = fsFileWrite(&s.file, s.fileOffset, data, size, FsWriteOption_None);
+    if (R_FAILED(rc)) { s.lastError = rc; return false; }
+    s.fileOffset += size;
+    s.bytesWritten += size;
     return true;
 }
 
 inline void recThreadMain(void *) {
     State &s = state();
     bool beginCalled = false;
-    bool needMeta = true;   // 最初のフレームの前にSPS/PPSを入れる
-    int idrCount = 0;
+
+    if (!mp4::begin(g_mp4, fileWrite, g_writeBuf, kWriteSize, kSPS + 4, sizeof(kSPS) - 4,
+                    kPPS + 4, sizeof(kPPS) - 4, 1280, 720)) {
+        s.stopRequest = true;
+    }
 
     while (!s.stopRequest.load()) {
         u32 dataSize = 0;
@@ -139,16 +122,11 @@ inline void recThreadMain(void *) {
         if (R_FAILED(rc)) { s.lastError = rc; break; }
         if (dataSize <= 4) continue;
 
-        const bool isIDR = (g_xferBuf[4] & 0x1F) == 5;
-        if (needMeta || (isIDR && ++idrCount >= 5)) {
-            idrCount = 0;
-            needMeta = false;
-            if (!appendData(kSPS, sizeof(kSPS)) || !appendData(kPPS, sizeof(kPPS))) break;
-        }
-        if (!appendData(g_xferBuf, dataSize)) break;
+        if (!mp4::addFrame(g_mp4, g_xferBuf, dataSize, timestamp)) break;
+        s.recordedUs = mp4::durationUs(g_mp4);
     }
 
-    flushWriteBuf();
+    mp4::finish(g_mp4);
     fsFileFlush(&s.file);
     fsFileClose(&s.file);
     fsFsClose(&s.sdfs);
@@ -204,7 +182,7 @@ inline bool start() {
 
     bool found = false;
     for (u32 i = s.nextRecIndex; i < 100000; i++) {
-        snprintf(s.recPath, sizeof(s.recPath), "/switch/rec-menu/rec_%05u.h264", i);
+        snprintf(s.recPath, sizeof(s.recPath), "/switch/rec-menu/rec_%05u.mp4", i);
         FsDirEntryType type;
         if (R_FAILED(fsFsGetEntryType(&s.sdfs, s.recPath, &type))) {
             s.nextRecIndex = i + 1;
@@ -221,8 +199,8 @@ inline bool start() {
 
     s.fileOffset = 0;
     s.bytesWritten = 0;
+    s.recordedUs = 0;
     s.lastError = 0;
-    g_writeLen = 0;
     s.stopRequest = false;
     s.recording = true;
 
@@ -255,7 +233,11 @@ inline void stop() {
     if (s.lastError != 0) {
         s.recMsg = errText(s.lastError, buf, sizeof(buf));
     } else {
-        snprintf(buf, sizeof(buf), "Saved %.1fMB", s.bytesWritten.load() / 1048576.0);
+        const u32 sec = u32(s.recordedUs.load() / 1000000ULL);
+        if (sec == 0 && s.bytesWritten.load() < 4096)
+            snprintf(buf, sizeof(buf), "No video data");
+        else
+            snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0);
         s.recMsg = buf;
     }
 }
