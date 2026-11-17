@@ -34,6 +34,15 @@ jobs:
           cd tpl
           make
 
+      - name: Symbolize crash addresses
+        run: |
+          cd tpl
+          BIN=$DEVKITPRO/devkitA64/bin
+          $BIN/aarch64-none-elf-readelf -n tpl.elf | grep -i 'build id' || true
+          $BIN/aarch64-none-elf-addr2line -a -f -C -i -e tpl.elf 0x33774 0x33768 0x5028 0xa4cc 0x6ac 0x660 0x17fe8 0x11478 0xd428 0x10be8
+          $BIN/aarch64-none-elf-objdump -d -C tpl.elf --start-address=0x33700 --stop-address=0x337a0
+          $BIN/aarch64-none-elf-objdump -d -C tpl.elf --start-address=0x4fc0 --stop-address=0x5040
+
       - name: Upload ovl
         uses: actions/upload-artifact@v4
         with:
