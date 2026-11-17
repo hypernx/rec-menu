@@ -23,6 +23,12 @@ jobs:
       - name: Get Tesla-Template
         run: git clone --recursive https://github.com/WerWolv/Tesla-Template.git tpl
 
+      - name: Patch libtesla (keep overlay out of game video)
+        run: |
+          # Teslaの画面がゲームの録画映像に写り込まないようにする
+          sed -i '/viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));/d' tpl/libs/libtesla/include/tesla.hpp
+          grep -c 'ViLayerStack_Recording' tpl/libs/libtesla/include/tesla.hpp || true
+
       - name: Replace sources
         run: |
           rm -rf tpl/source/*
