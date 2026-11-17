@@ -107,6 +107,7 @@ static Service g_grcdAudio;
 static std::atomic<bool> g_beginCalled{false};
 
 inline u64 nowUs() { return armTicksToNs(armGetSystemTick()) / 1000ULL; }
+inline u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
 
 inline Result grcdOpen(Service *srv) {
     if (serviceIsActive(srv)) return 0;
@@ -342,8 +343,6 @@ inline void stopLocked(bool bySleep) {
         s.recMsg = buf;
     }
 }
-
-inline u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
 
 static Mutex g_ctrlLock;   // start / stop を同時に走らせない(スリープ検知は別スレッドから止める)
 
