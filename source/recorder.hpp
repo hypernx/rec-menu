@@ -6,6 +6,7 @@
 #include <atomic>
 #include <sys/stat.h>
 #include "mp4.hpp"
+#include "osd.hpp"
 
 // 録画・スクリーンショットのバックエンド。
 // - スクリーンショット: capssc(caps:sc)でJPEGを取得し、SDカードに保存する。
@@ -47,6 +48,7 @@ struct State {
     std::string recMsg = "Ready";
     u64 msgExpireMs = 0;        // この時刻を過ぎたら recMsg を消す(0なら消さない)
     std::atomic<bool> stoppedBySleep{false};
+    std::atomic<u64> lastVideoMs{0};    // 最後に映像を受け取った時刻
 };
 
 inline State &state() {
@@ -163,6 +165,7 @@ inline void videoThreadMain(void *) {
         if (R_FAILED(rc)) { s.lastError = rc; break; }
         if (dataSize <= 4) continue;
 
+        s.lastVideoMs = nowMs();
         if (!mp4::addVideo(g_video, g_vXfer, dataSize, ts, nowUs())) break;
         s.recordedUs = mp4::durationUs(g_video);
     }
@@ -213,7 +216,13 @@ inline void closeFile() {
     s.fileOpen = false;
 }
 
-// 録画開始。メインスレッドから呼ぶ
+inline void startFail(const char *en, const char *jp) {
+    state().recMsg = en;
+    state().msgExpireMs = 0;
+    osd::toast(jp, osd::kRed, 4000);
+}
+
+// 録画開始
 inline bool startLocked() {
     State &s = state();
     char buf[48];
@@ -222,7 +231,7 @@ inline bool startLocked() {
     // 前回のスレッドが終わっていなければ待つ(最大1秒)
     if (!joinThread(s.vThread, s.vThreadValid, 1'000'000'000ULL) ||
         !joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL)) {
-        s.recMsg = "Busy (stopping)";
+        startFail("Busy (stopping)", "前の録画を保存中です。少し待ってください");
         return false;
     }
     closeFile();
@@ -230,13 +239,13 @@ inline bool startLocked() {
     // ゲームが起動していないと録画できない
     u64 appPid = 0;
     if (R_FAILED(pmdmntGetApplicationProcessId(&appPid)) || appPid == 0) {
-        s.recMsg = "No game running";
+        startFail("No game running", "ゲームが起動していないため録画できません");
         return false;
     }
     // SysDVR と同時に使うと映像を取り合うので止める
     u64 dvrPid = 0;
     if (R_SUCCEEDED(pmdmntGetProcessId(&dvrPid, SYSDVR_PROGRAM_ID)) && dvrPid != 0) {
-        s.recMsg = "Disable SysDVR";
+        startFail("Disable SysDVR", "SysDVR が動いているため録画できません");
         return false;
     }
 
@@ -245,11 +254,11 @@ inline bool startLocked() {
         rc = grcdOpen(&g_grcdVideo);
         if (R_SUCCEEDED(rc)) rc = grcdOpen(&g_grcdAudio);
     });
-    if (R_FAILED(rc)) { s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
+    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
 
     // 保存先(devoptabは使わず、FS APIで直接書く。スクリーンショット側と干渉しない)
     rc = fsOpenSdCardFileSystem(&s.sdfs);
-    if (R_FAILED(rc)) { s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
+    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
     fsFsCreateDirectory(&s.sdfs, "/switch");
     fsFsCreateDirectory(&s.sdfs, "/switch/rec-menu");
 
@@ -263,12 +272,12 @@ inline bool startLocked() {
             break;
         }
     }
-    if (!found) { fsFsClose(&s.sdfs); s.recMsg = "No free name"; return false; }
+    if (!found) { fsFsClose(&s.sdfs); startFail("No free name", "保存できるファイル名がありません"); return false; }
 
     rc = fsFsCreateFile(&s.sdfs, s.recPath, 0, 0);
     if (R_SUCCEEDED(rc))
         rc = fsFsOpenFile(&s.sdfs, s.recPath, FsOpenMode_Write | FsOpenMode_Append, &s.file);
-    if (R_FAILED(rc)) { fsFsClose(&s.sdfs); s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
+    if (R_FAILED(rc)) { fsFsClose(&s.sdfs); startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
     s.fileOpen = true;
 
     s.fileOffset = 0;
@@ -278,12 +287,13 @@ inline bool startLocked() {
     s.audioError = 0;
     s.audioPackets = 0;
     s.stopRequest = false;
+    s.lastVideoMs = nowMs();
     mutexInit(&g_fileLock);
 
     if (!mp4::begin(fileWrite, g_video, g_vBuf, kVBufSize, g_audio, g_aBuf, kABufSize,
                     kSPS + 4, sizeof(kSPS) - 4, kPPS + 4, sizeof(kPPS) - 4, 1280, 720)) {
         closeFile();
-        s.recMsg = errText(s.lastError, buf, sizeof(buf));
+        startFail(errText(s.lastError, buf, sizeof(buf)), "録画を開始できませんでした");
         return false;
     }
 
@@ -291,7 +301,7 @@ inline bool startLocked() {
     if (R_SUCCEEDED(rc)) rc = threadStart(&s.vThread);
     if (R_FAILED(rc)) {
         closeFile();
-        s.recMsg = errText(rc, buf, sizeof(buf));
+        startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした");
         return false;
     }
     s.vThreadValid = true;
@@ -310,60 +320,92 @@ inline bool startLocked() {
     return true;
 }
 
-// 録画停止。メインスレッドから呼ぶ
-inline void stopLocked(bool bySleep) {
+// 録画停止の理由(通知の文言が変わる)
+enum class StopReason { User, Sleep, Home, GameStopped, Exit };
+
+// 録画停止
+inline void stopLocked(StopReason reason) {
     State &s = state();
     if (!s.vThreadValid && !s.aThreadValid) return;
+    const bool wasRecording = s.recording;
     s.stopRequest = true;
-    // 次のデータが届けばスレッドは終わる(通常数十ms以内)
+    // 次のデータが届けばスレッドは終わる(通常数十ms以内)。
+    // ホーム画面ではデータが来ないので待ちきれないことがある → 後で poll() が閉じる
     bool done = joinThread(s.vThread, s.vThreadValid, 1'000'000'000ULL);
     done = joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL) && done;
     if (done) closeFile();
     s.recording = false;
-    s.stoppedBySleep = bySleep;
+    s.stoppedBySleep = reason == StopReason::Sleep;
     s.msgExpireMs = 0;
+    if (!wasRecording) return;
 
     char buf[48];
+    char note[128];
+    const u32 sec = u32(s.recordedUs.load() / 1000000ULL);
     if (s.lastError != 0) {
         s.recMsg = errText(s.lastError, buf, sizeof(buf));
-    } else {
-        const u32 sec = u32(s.recordedUs.load() / 1000000ULL);
-        if (sec == 0 && s.bytesWritten.load() < 4096)
-            snprintf(buf, sizeof(buf), "No video data");
-        else
-        {
-            char snd[24];
-            if (s.audioError) snprintf(snd, sizeof(snd), " snd:%04u-%04u", 2000 + R_MODULE(s.audioError.load()), R_DESCRIPTION(s.audioError.load()));
-            else if (s.audioPackets == 0) snprintf(snd, sizeof(snd), " snd:0");
-            else snd[0] = 0;
-            snprintf(buf, sizeof(buf), "Saved%s %u:%02u %.1fMB%s", bySleep ? "(sleep)" : "", sec / 60, sec % 60,
-                     s.bytesWritten.load() / 1048576.0, snd);
-            s.msgExpireMs = nowMs() + 3000;
-        }
-        s.recMsg = buf;
+        snprintf(note, sizeof(note), "録画エラーで停止しました (%s)", s.recMsg.c_str());
+        osd::toast(note, osd::kRed, 5000);
+        return;
+    }
+    if (sec == 0 && s.bytesWritten.load() < 4096) {
+        s.recMsg = "No video data";
+        osd::toast("映像が届かなかったため録画できませんでした", osd::kRed, 5000);
+        return;
+    }
+    char snd[24];
+    if (s.audioError) snprintf(snd, sizeof(snd), " snd:%04u-%04u", 2000 + R_MODULE(s.audioError.load()), R_DESCRIPTION(s.audioError.load()));
+    else if (s.audioPackets == 0) snprintf(snd, sizeof(snd), " snd:0");
+    else snd[0] = 0;
+    snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB%s", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0, snd);
+    s.recMsg = buf;
+    s.msgExpireMs = nowMs() + 3000;
+
+    char len[32];
+    snprintf(len, sizeof(len), "%u:%02u・%.1fMB", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0);
+    switch (reason) {
+        case StopReason::Home:
+            snprintf(note, sizeof(note), "ホーム画面に移動したため録画を停止しました (%s)", len);
+            osd::toast(note, osd::kOrange, 5000);
+            break;
+        case StopReason::Sleep:
+            snprintf(note, sizeof(note), "スリープしたため録画を停止しました (%s)", len);
+            osd::toast(note, osd::kOrange, 5000);
+            break;
+        case StopReason::GameStopped:
+            snprintf(note, sizeof(note), "ゲームの映像が止まったため録画を停止しました (%s)", len);
+            osd::toast(note, osd::kOrange, 5000);
+            break;
+        case StopReason::Exit:
+            break;
+        default:
+            snprintf(note, sizeof(note), "録画を停止しました (%s)", len);
+            osd::toast(note, osd::kGreen, 3000);
+            break;
     }
 }
 
-static Mutex g_ctrlLock;   // start / stop を同時に走らせない(スリープ検知は別スレッドから止める)
+static Mutex g_ctrlLock;   // start / stop を同時に走らせない(監視スレッドからも止めるため)
 
 inline bool start() {
     mutexLock(&g_ctrlLock);
     bool ok = startLocked();
     mutexUnlock(&g_ctrlLock);
+    if (ok) osd::toast("録画を開始しました", osd::kRed, 2500);
     return ok;
 }
 
-inline void stop(bool bySleep = false) {
+inline void stop(StopReason reason = StopReason::User) {
     mutexLock(&g_ctrlLock);
-    stopLocked(bySleep);
+    stopLocked(reason);
     mutexUnlock(&g_ctrlLock);
 }
 
-// 毎フレーム呼ぶ。録画スレッドがエラーで止まったときや、停止に時間がかかったときの後始末
+// 録画スレッドがエラーで止まったときや、停止に時間がかかったときの後始末
 inline void poll() {
     State &s = state();
     mutexLock(&g_ctrlLock);
-    if (s.recording && s.stopRequest.load()) stopLocked(false);
+    if (s.recording && s.stopRequest.load()) stopLocked(StopReason::User);
     // 停止時にスレッドが終わりきっていなかった場合、終わったらファイルを閉じる
     if (!s.recording && s.fileOpen &&
         joinThread(s.vThread, s.vThreadValid, 0) && joinThread(s.aThread, s.aThreadValid, 0))
@@ -372,151 +414,66 @@ inline void poll() {
 }
 
 // ---------------------------------------------------------------------------
-// スリープ検知: 録画中にスリープしたら自動で停止してファイルを閉じる
-// (psc:m に登録すると、スリープ/電源オフの直前に通知が来る)
+// スクリーンショット(メニューを閉じてから撮るので、メニューは写らない)
 // ---------------------------------------------------------------------------
-constexpr u32 kPscModuleId = 0x524D;   // 他と重ならない適当な番号
-static PscPmModule g_psc;
-static bool g_pscOk = false;
-static Thread g_pscThread;
-static std::atomic<bool> g_pscRun{false};
+static std::atomic<u64> g_shotAtMs{0};
 
-inline void pscThreadMain(void *) {
-    while (g_pscRun) {
-        if (R_FAILED(eventWait(&g_psc.event, 200'000'000ULL))) continue;   // 0.2秒ごとに終了確認
-        PscPmState st;
-        u32 flags;
-        if (R_FAILED(pscPmModuleGetRequest(&g_psc, &st, &flags))) continue;
-        if (st == PscPmState_ReadySleep || st == PscPmState_ReadyShutdown) {
-            if (state().recording) stop(true);
-        }
-        pscPmModuleAcknowledge(&g_psc, st);
-    }
+inline void requestScreenshot() {
+    g_shotAtMs = nowMs() + 450;   // メニューが消えるのを待つ
 }
 
-// initServices の中(smセッション内)から呼ぶ
-inline void initSleepWatch() {
-    mutexInit(&g_ctrlLock);
-    if (R_FAILED(pscmInitialize())) return;
-    const u32 deps[] = { PscPmModuleId_Fs };   // SDカードが止まる前に通知してもらう
-    if (R_FAILED(pscmGetPmModule(&g_psc, PscPmModuleId(kPscModuleId), deps, 1, true))) { pscmExit(); return; }
-    g_pscRun = true;
-    if (R_FAILED(threadCreate(&g_pscThread, pscThreadMain, nullptr, nullptr, 0x2000, 0x2C, -2)) ||
-        R_FAILED(threadStart(&g_pscThread))) {
-        g_pscRun = false;
-        pscPmModuleFinalize(&g_psc);
-        pscPmModuleClose(&g_psc);
-        pscmExit();
-        return;
-    }
-    g_pscOk = true;
-}
-
-inline void exitSleepWatch() {
-    if (!g_pscOk) return;
-    g_pscRun = false;
-    threadWaitForExit(&g_pscThread);
-    threadClose(&g_pscThread);
-    pscPmModuleFinalize(&g_psc);
-    pscPmModuleClose(&g_psc);
-    pscmExit();
-    g_pscOk = false;
-}
-
-inline void shutdown() {
-    State &s = state();
-    exitSleepWatch();
-    if (s.recording) stop();
-    if (serviceIsActive(&g_grcdVideo)) serviceClose(&g_grcdVideo);
-    if (serviceIsActive(&g_grcdAudio)) serviceClose(&g_grcdAudio);
-    if (s.capsReady) capsscExit();
-}
-
-// 「Saved …」は3秒たったら消して Ready に戻す
-inline const std::string &recStatus() {
-    State &s = state();
-    static const std::string ready = "Ready";
-    if (s.msgExpireMs != 0 && nowMs() > s.msgExpireMs) {
-        s.recMsg = ready;
-        s.msgExpireMs = 0;
-    }
-    return s.recMsg;
-}
-
-
-// ---------------------------------------------------------------------------
-// スクリーンショット
-// ---------------------------------------------------------------------------
-
-inline bool fileExists(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return false;
-    fclose(f);
-    return true;
-}
-
-// スクリーンショットを撮って /switch/rec-menu/shot_00000.jpg のように保存する
-inline bool screenshot() {
+inline void doScreenshot() {
     State &s = state();
     char msg[64];
-
     if (!s.capsReady) {
         s.shotMsg = "caps not ready";
-        return false;
+        osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
+        return;
     }
-
-    // 大きなバッファはヒープではなく静的領域に置く
     static u8 jpegBuf[CAPSSC_JPEG_BUFFER_SIZE];
     u64 jpegSize = 0;
+    Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, sizeof(jpegBuf), ViLayerStack_Screenshot, 1000000000LL);
+    if (R_FAILED(rc) || jpegSize == 0 || jpegSize > sizeof(jpegBuf)) {
+        s.shotMsg = R_FAILED(rc) ? errText(rc, msg, sizeof(msg)) : "Bad size";
+        osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
+        return;
+    }
 
-    Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, sizeof(jpegBuf),
-                                            ViLayerStack_Screenshot, 1000000000LL);
+    // SDカードへはFS APIで直接書く(録画中でも干渉しない)
+    FsFileSystem fs;
+    if (R_FAILED(rc = fsOpenSdCardFileSystem(&fs))) {
+        s.shotMsg = errText(rc, msg, sizeof(msg));
+        osd::toast("SDカードに保存できませんでした", osd::kRed, 4000);
+        return;
+    }
+    fsFsCreateDirectory(&fs, "/switch");
+    fsFsCreateDirectory(&fs, "/switch/rec-menu");
+    char path[64];
+    bool found = false;
+    for (u32 i = s.nextIndex; i < 100000; i++) {
+        snprintf(path, sizeof(path), "/switch/rec-menu/shot_%05u.jpg", i);
+        FsDirEntryType type;
+        if (R_FAILED(fsFsGetEntryType(&fs, path, &type))) { s.nextIndex = i + 1; found = true; break; }
+    }
+    FsFile f;
+    if (!found) rc = MAKERESULT(Module_Libnx, LibnxError_IoError);
+    else if (R_SUCCEEDED(rc = fsFsCreateFile(&fs, path, s64(jpegSize), 0)) &&
+             R_SUCCEEDED(rc = fsFsOpenFile(&fs, path, FsOpenMode_Write, &f))) {
+        rc = fsFileWrite(&f, 0, jpegBuf, jpegSize, FsWriteOption_Flush);
+        fsFileClose(&f);
+        if (R_FAILED(rc)) fsFsDeleteFile(&fs, path);
+    }
+    fsFsClose(&fs);
+
     if (R_FAILED(rc)) {
-        snprintf(msg, sizeof(msg), "Capture err 0x%X", rc);
-        s.shotMsg = msg;
-        return false;
+        s.shotMsg = errText(rc, msg, sizeof(msg));
+        osd::toast("SDカードに保存できませんでした", osd::kRed, 4000);
+        return;
     }
-    if (jpegSize == 0 || jpegSize > sizeof(jpegBuf)) {
-        s.shotMsg = "Bad size";
-        return false;
-    }
-
-    u32 idx = s.nextIndex;
-    // SDカードはこの中でだけマウントされる(Teslaの仕様)
-    bool ok = false;
-    tsl::hlp::doWithSDCardHandle([&]() {
-        mkdir("sdmc:/switch", 0777);
-        mkdir("sdmc:/switch/rec-menu", 0777);
-
-        // 空いているファイル名を探す(上書き防止)
-        char path[96];
-        u32 i = s.nextIndex;
-        bool found = false;
-        for (; i < 100000; i++) {
-            snprintf(path, sizeof(path), "sdmc:/switch/rec-menu/shot_%05u.jpg", i);
-            if (!fileExists(path)) { found = true; break; }
-        }
-        if (!found) { s.shotMsg = "No free name"; return; }
-
-        FILE *f = fopen(path, "wb");
-        if (!f) { s.shotMsg = "SD write err"; return; }
-        size_t written = fwrite(jpegBuf, 1, static_cast<size_t>(jpegSize), f);
-        int closeRc = fclose(f);
-        if (written != jpegSize || closeRc != 0) {
-            remove(path);
-            s.shotMsg = "SD write failed";
-            return;
-        }
-        idx = i + 1;
-        ok = true;
-    });
-    if (!ok) return false;
-
-    s.nextIndex = idx;
     s.savedCount++;
     snprintf(msg, sizeof(msg), "Saved %u", s.savedCount);
     s.shotMsg = msg;
-    return true;
+    osd::toast("スクリーンショットを保存しました", osd::kGreen, 2500);
 }
 
 inline const std::string &shotStatus() { return state().shotMsg; }
@@ -532,6 +489,120 @@ inline std::string elapsedText() {
     char buf[16];
     snprintf(buf, sizeof(buf), "%02u:%02u", t / 60, t % 60);
     return buf;
+}
+
+// ---------------------------------------------------------------------------
+// 監視スレッド(0.1秒ごと)
+//   - スリープ/電源オフの直前 → 録画を止める(psc:m の通知)
+//   - HOMEボタン → 録画を止める(libtesla に入れた通知フック)
+//   - ゲームの映像が1.5秒以上来ない → 録画を止める(ゲーム終了など)
+//   - スクリーンショットの撮影、右上タイマーと左下通知の描画
+// ---------------------------------------------------------------------------
+constexpr u32 kPscModuleId = 0x524D;   // 他と重ならない適当な番号
+static PscPmModule g_psc;
+static bool g_pscOk = false;
+static Thread g_monThread;
+static bool g_monValid = false;
+static std::atomic<bool> g_monRun{false};
+static std::atomic<bool> g_homePressed{false};
+
+// libtesla のバックグラウンドスレッドから呼ばれる(重い処理はしない)
+inline void onHomeButton() { g_homePressed = true; }
+
+inline void monitorThreadMain(void *) {
+    State &s = state();
+    while (g_monRun) {
+        // スリープの通知を待つ(最大0.1秒)
+        if (g_pscOk && R_SUCCEEDED(eventWait(&g_psc.event, 100'000'000ULL))) {
+            PscPmState st;
+            u32 flags;
+            if (R_SUCCEEDED(pscPmModuleGetRequest(&g_psc, &st, &flags))) {
+                if ((st == PscPmState_ReadySleep || st == PscPmState_ReadyShutdown) && s.recording)
+                    stop(StopReason::Sleep);
+                pscPmModuleAcknowledge(&g_psc, st);
+            }
+        } else if (!g_pscOk) {
+            svcSleepThread(100'000'000ULL);
+        }
+
+        if (g_homePressed.exchange(false) && s.recording) stop(StopReason::Home);
+
+        if (s.recording && g_video.started && nowMs() - s.lastVideoMs.load() > 1500)
+            stop(StopReason::GameStopped);
+
+        poll();
+
+        const u64 shotAt = g_shotAtMs.load();
+        if (shotAt != 0 && nowMs() >= shotAt) {
+            g_shotAtMs = 0;
+            doScreenshot();
+        }
+
+        if (s.recording && s.showTimer) {
+            const u32 t = elapsedSec();
+            char txt[32];
+            snprintf(txt, sizeof(txt), "REC %02u:%02u", t / 60, t % 60);
+            osd::setTimer(true, txt);
+        } else {
+            osd::setTimer(false, "");
+        }
+        osd::tick();
+    }
+}
+
+// initServices の中(smセッション内)から呼ぶ。スリープ通知の登録だけ先にしておく
+inline void initSleepWatch() {
+    mutexInit(&g_ctrlLock);
+    if (R_FAILED(pscmInitialize())) return;
+    const u32 deps[] = { PscPmModuleId_Fs };   // SDカードが止まる前に通知してもらう
+    if (R_FAILED(pscmGetPmModule(&g_psc, PscPmModuleId(kPscModuleId), deps, 1, true))) { pscmExit(); return; }
+    g_pscOk = true;
+}
+
+// 画面の準備ができた後(loadInitialGui)に呼ぶ
+inline void startMonitor() {
+    if (g_monValid) return;
+    g_monRun = true;
+    if (R_SUCCEEDED(threadCreate(&g_monThread, monitorThreadMain, nullptr, nullptr, 0x4000, 0x2C, -2))) {
+        if (R_SUCCEEDED(threadStart(&g_monThread))) g_monValid = true;
+        else threadClose(&g_monThread);
+    }
+    if (!g_monValid) g_monRun = false;
+}
+
+// 画面を片付ける前に呼ぶ
+inline void stopMonitor() {
+    if (!g_monValid) return;
+    g_monRun = false;
+    threadWaitForExit(&g_monThread);
+    threadClose(&g_monThread);
+    g_monValid = false;
+}
+
+inline void shutdown() {
+    State &s = state();
+    stopMonitor();
+    if (s.recording) stop(StopReason::Exit);
+    if (g_pscOk) {
+        pscPmModuleFinalize(&g_psc);
+        pscPmModuleClose(&g_psc);
+        pscmExit();
+        g_pscOk = false;
+    }
+    if (serviceIsActive(&g_grcdVideo)) serviceClose(&g_grcdVideo);
+    if (serviceIsActive(&g_grcdAudio)) serviceClose(&g_grcdAudio);
+    if (s.capsReady) capsscExit();
+}
+
+// 「Saved …」は3秒たったら消して Ready に戻す
+inline const std::string &recStatus() {
+    State &s = state();
+    static const std::string ready = "Ready";
+    if (s.msgExpireMs != 0 && nowMs() > s.msgExpireMs) {
+        s.recMsg = ready;
+        s.msgExpireMs = 0;
+    }
+    return s.recMsg;
 }
 
 inline const char *qualityName(Quality q) {

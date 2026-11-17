@@ -26,8 +26,14 @@ jobs:
       - name: Patch libtesla (keep overlay out of game video)
         run: |
           # Teslaの画面がゲームの録画映像に写り込まないようにする
-          sed -i '/viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));/d' tpl/libs/libtesla/include/tesla.hpp
-          grep -c 'ViLayerStack_Recording' tpl/libs/libtesla/include/tesla.hpp || true
+          T=tpl/libs/libtesla/include/tesla.hpp
+          sed -i '/viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));/d' $T
+          # HOMEボタンと終了処理のフックを追加する
+          sed -i '/^#define ELEMENT_BOUNDS/a namespace tsl::impl { inline void (*onHomeButton)() = nullptr; inline void (*onBeforeExitScreen)() = nullptr; }' $T
+          sed -i '/case WaiterObject_HomeButton:/a\                            if (tsl::impl::onHomeButton) tsl::impl::onHomeButton();' $T
+          sed -i 's/^\( *\)overlay->exitScreen();/\1if (tsl::impl::onBeforeExitScreen) tsl::impl::onBeforeExitScreen();\n\1overlay->exitScreen();/' $T
+          grep -n 'onHomeButton\|onBeforeExitScreen\|ViLayerStack_Recording' $T
+          grep -q 'tsl::impl::onHomeButton();' $T && grep -q 'tsl::impl::onBeforeExitScreen();' $T
 
       - name: Replace sources
         run: |
