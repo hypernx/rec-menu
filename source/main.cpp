@@ -110,7 +110,7 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.3.1");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.4.0");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader("Recording  (save: /switch/rec-menu)"));

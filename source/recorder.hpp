@@ -10,14 +10,14 @@
 // 録画・スクリーンショットのバックエンド。
 // - スクリーンショット: capssc(caps:sc)でJPEGを取得し、SDカードに保存する。
 // - 録画: grc:d(ゲームの動画キャプチャ用ストリーム)からH.264映像を受け取り、
-//         MP4にして sdmc:/switch/rec-menu/rec_00000.mp4 に書き出す(映像のみ・音声なし)。
+//         音声(PCM)と一緒にMP4にして sdmc:/switch/rec-menu/rec_00000.mp4 に書き出す。
 //   grc:d の使い方は SysDVR(exelix11/SysDVR)の実装に合わせている。
 namespace rec {
 
 enum Quality : u8 { Low = 0, Mid = 1, High = 2 };
 
 struct State {
-    std::atomic<bool> recording{false};  // 録画スレッドが動いている
+    bool recording = false;              // 録画中(メインスレッドだけが書き換える)
     std::atomic<bool> stopRequest{false};
     Quality quality = Mid;
     bool showTimer = true;
@@ -29,15 +29,18 @@ struct State {
     std::string shotMsg = "Ready";
 
     // 録画
-    bool grcdOpen = false;
-    bool threadValid = false;
-    Thread thread{};
+    bool vThreadValid = false;
+    bool aThreadValid = false;
+    Thread vThread{};
+    Thread aThread{};
+    bool fileOpen = false;
     FsFileSystem sdfs{};
     FsFile file{};
     s64 fileOffset = 0;
     std::atomic<u64> bytesWritten{0};
     std::atomic<u64> recordedUs{0};     // 動画として書けた長さ
     std::atomic<u32> lastError{0};
+    std::atomic<u32> audioError{0};
     u32 nextRecIndex = 0;
     char recPath[64] = {};
     std::string recMsg = "Ready";
@@ -61,10 +64,12 @@ inline void init() {
     // 注意: ここではSDカードがまだマウントされていないので、SDには触らない。
 }
 
-inline bool isRecording() { return state().recording.load(); }
+inline bool isRecording() { return state().recording; }
 
 // ---------------------------------------------------------------------------
 // 録画(grc:d)
+//   映像スレッドと音声スレッドがそれぞれ grc:d からデータを受け取り、MP4に書く。
+//   grc:d の受け取りは待ち状態になる(ブロックする)ので、映像と音声で別の接続を使う(SysDVRと同じ)。
 // ---------------------------------------------------------------------------
 
 // grcdBegin が未実行のとき grcdTransfer が返すエラー(SysDVRより)
@@ -79,42 +84,69 @@ static const u8 kSPS[] = { 0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x0C, 0x20, 0xAC,
                            0x40, 0x28, 0x02, 0xDD, 0x35, 0x01, 0x0D, 0x01, 0xE0, 0x80 };
 static const u8 kPPS[] = { 0x00, 0x00, 0x00, 0x01, 0x68, 0xEE, 0x3C, 0xB0 };
 
-constexpr size_t kXferSize  = 0x54000;   // SysDVRと同じサイズ
-constexpr size_t kWriteSize = 0x58000;   // MP4の1かたまり分(1フレームより大きい必要がある)
+constexpr size_t kVXferSize = 0x54000;   // 映像の受け取り(SysDVRと同じサイズ)
+constexpr size_t kVBufSize  = 0x58000;   // MP4の映像1かたまり分(1フレームより大きい必要がある)
+constexpr size_t kAXferSize = 0x1000;    // 音声の受け取り(本体の録画機能と同じ)
+constexpr size_t kABufSize  = 0x8000;    // MP4の音声1かたまり分(約0.17秒)
 
-alignas(0x1000) static u8 g_xferBuf[kXferSize];
-alignas(0x1000) static u8 g_writeBuf[kWriteSize];
-static mp4::Writer g_mp4;
+alignas(0x1000) static u8 g_vXfer[kVXferSize];
+alignas(0x1000) static u8 g_vBuf[kVBufSize];
+alignas(0x1000) static u8 g_aXfer[kAXferSize];
+alignas(0x1000) static u8 g_aBuf[kABufSize];
+static mp4::VideoTrack g_video;
+static mp4::AudioTrack g_audio;
+static Mutex g_fileLock;
+static Service g_grcdVideo;
+static Service g_grcdAudio;
+static std::atomic<bool> g_beginCalled{false};
 
-inline bool fileWrite(const void *data, size_t size) {
-    State &s = state();
-    Result rc = fsFileWrite(&s.file, s.fileOffset, data, size, FsWriteOption_None);
-    if (R_FAILED(rc)) { s.lastError = rc; return false; }
-    s.fileOffset += size;
-    s.bytesWritten += size;
-    return true;
+inline Result grcdOpen(Service *srv) {
+    if (serviceIsActive(srv)) return 0;
+    return smGetService(srv, "grc:d");
 }
 
-inline void recThreadMain(void *) {
+inline Result grcdXfer(Service *srv, GrcStream stream, void *buf, size_t size, u32 *dataSize, u64 *ts) {
+    struct { u32 num_frames; u32 data_size; u64 start_timestamp; } out{};
+    u32 in = stream;
+    Result rc = serviceDispatchInOut(srv, 2, in, out,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
+        .buffers = { { buf, size } },
+    );
+    if (R_SUCCEEDED(rc)) { *dataSize = out.data_size; *ts = out.start_timestamp; }
+    return rc;
+}
+
+// MP4への書き込み(映像と音声の両方のスレッドから呼ばれるので排他する)
+inline bool fileWrite(const void *hdr, size_t hdrSize, const void *data, size_t dataSize) {
     State &s = state();
-    bool beginCalled = false;
-
-    if (!mp4::begin(g_mp4, fileWrite, g_writeBuf, kWriteSize, kSPS + 4, sizeof(kSPS) - 4,
-                    kPPS + 4, sizeof(kPPS) - 4, 1280, 720)) {
-        s.stopRequest = true;
+    mutexLock(&g_fileLock);
+    Result rc = 0;
+    if (hdrSize) rc = fsFileWrite(&s.file, s.fileOffset, hdr, hdrSize, FsWriteOption_None);
+    if (R_SUCCEEDED(rc) && dataSize)
+        rc = fsFileWrite(&s.file, s.fileOffset + hdrSize, data, dataSize, FsWriteOption_None);
+    if (R_SUCCEEDED(rc)) {
+        s.fileOffset += hdrSize + dataSize;
+        s.bytesWritten += hdrSize + dataSize;
+    } else {
+        s.lastError = rc;
     }
+    mutexUnlock(&g_fileLock);
+    return R_SUCCEEDED(rc);
+}
 
+inline void videoThreadMain(void *) {
+    State &s = state();
     while (!s.stopRequest.load()) {
         u32 dataSize = 0;
-        u64 timestamp = 0;
+        u64 ts = 0;
         // ゲームが動画撮影に対応していないと、ここでデータが来るまで待ち続ける
-        Result rc = grcdTransfer(GrcStream_Video, g_xferBuf, kXferSize, nullptr, &dataSize, &timestamp);
+        Result rc = grcdXfer(&g_grcdVideo, GrcStream_Video, g_vXfer, kVXferSize, &dataSize, &ts);
 
-        if (rc == GRCD_NOT_INITIALIZED && !beginCalled) {
+        if (rc == GRCD_NOT_INITIALIZED && !g_beginCalled) {
             // まだ誰も grcdBegin していない場合だけ呼ぶ。
             // (既に呼ばれている状態でもう一度呼ぶと本体ごと落ちるため、必ずこの順番)
-            beginCalled = true;
-            rc = grcdBegin();
+            g_beginCalled = true;
+            rc = serviceDispatch(&g_grcdVideo, 1);
             if (R_FAILED(rc)) { s.lastError = rc; break; }
             continue;
         }
@@ -122,20 +154,53 @@ inline void recThreadMain(void *) {
         if (R_FAILED(rc)) { s.lastError = rc; break; }
         if (dataSize <= 4) continue;
 
-        if (!mp4::addFrame(g_mp4, g_xferBuf, dataSize, timestamp)) break;
-        s.recordedUs = mp4::durationUs(g_mp4);
+        if (!mp4::addVideo(g_video, g_vXfer, dataSize, ts)) break;
+        s.recordedUs = mp4::durationUs(g_video);
     }
+    mp4::flushVideo(g_video);
+    s.stopRequest = true;   // 映像が止まったら音声も止める
+}
 
-    mp4::finish(g_mp4);
-    fsFileFlush(&s.file);
-    fsFileClose(&s.file);
-    fsFsClose(&s.sdfs);
-    s.recording = false;
+inline void audioThreadMain(void *) {
+    State &s = state();
+    while (!s.stopRequest.load()) {
+        u32 dataSize = 0;
+        u64 ts = 0;
+        Result rc = grcdXfer(&g_grcdAudio, GrcStream_Audio, g_aXfer, kAXferSize, &dataSize, &ts);
+        if (rc == GRCD_NOT_INITIALIZED) {   // grcdBegin は映像側に任せて少し待つ
+            svcSleepThread(20'000'000ULL);
+            continue;
+        }
+        if (R_FAILED(rc)) {   // 音声だけ失敗しても映像は続ける
+            s.audioError = rc;
+            break;
+        }
+        if (!mp4::addAudio(g_audio, g_video, g_aXfer, dataSize, ts)) break;
+    }
+    mp4::flushAudio(g_audio);
 }
 
 inline const char *errText(Result rc, char *buf, size_t n) {
     snprintf(buf, n, "Err %04u-%04u", 2000 + R_MODULE(rc), R_DESCRIPTION(rc));
     return buf;
+}
+
+// スレッドの終了を待つ(最大 timeoutNs)。終わったら閉じて true
+inline bool joinThread(Thread &t, bool &valid, u64 timeoutNs) {
+    if (!valid) return true;
+    if (R_FAILED(waitSingleHandle(t.handle, timeoutNs))) return false;
+    threadClose(&t);
+    valid = false;
+    return true;
+}
+
+inline void closeFile() {
+    State &s = state();
+    if (!s.fileOpen) return;
+    fsFileFlush(&s.file);
+    fsFileClose(&s.file);
+    fsFsClose(&s.sdfs);
+    s.fileOpen = false;
 }
 
 // 録画開始。メインスレッドから呼ぶ
@@ -145,14 +210,12 @@ inline bool start() {
     if (s.recording) return true;
 
     // 前回のスレッドが終わっていなければ待つ(最大1秒)
-    if (s.threadValid) {
-        if (R_FAILED(waitSingleHandle(s.thread.handle, 1'000'000'000ULL))) {
-            s.recMsg = "Busy (stopping)";
-            return false;
-        }
-        threadClose(&s.thread);
-        s.threadValid = false;
+    if (!joinThread(s.vThread, s.vThreadValid, 1'000'000'000ULL) ||
+        !joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL)) {
+        s.recMsg = "Busy (stopping)";
+        return false;
     }
+    closeFile();
 
     // ゲームが起動していないと録画できない
     u64 appPid = 0;
@@ -168,11 +231,11 @@ inline bool start() {
     }
 
     Result rc = 0;
-    if (!s.grcdOpen) {
-        tsl::hlp::doWithSmSession([&]() { rc = grcdInitialize(); });
-        if (R_FAILED(rc)) { s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
-        s.grcdOpen = true;
-    }
+    tsl::hlp::doWithSmSession([&]() {
+        rc = grcdOpen(&g_grcdVideo);
+        if (R_SUCCEEDED(rc)) rc = grcdOpen(&g_grcdAudio);
+    });
+    if (R_FAILED(rc)) { s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
 
     // 保存先(devoptabは使わず、FS APIで直接書く。スクリーンショット側と干渉しない)
     rc = fsOpenSdCardFileSystem(&s.sdfs);
@@ -196,24 +259,39 @@ inline bool start() {
     if (R_SUCCEEDED(rc))
         rc = fsFsOpenFile(&s.sdfs, s.recPath, FsOpenMode_Write | FsOpenMode_Append, &s.file);
     if (R_FAILED(rc)) { fsFsClose(&s.sdfs); s.recMsg = errText(rc, buf, sizeof(buf)); return false; }
+    s.fileOpen = true;
 
     s.fileOffset = 0;
     s.bytesWritten = 0;
     s.recordedUs = 0;
     s.lastError = 0;
+    s.audioError = 0;
     s.stopRequest = false;
-    s.recording = true;
+    mutexInit(&g_fileLock);
 
-    rc = threadCreate(&s.thread, recThreadMain, nullptr, nullptr, 0x4000, 0x2C, -2);
-    if (R_SUCCEEDED(rc)) rc = threadStart(&s.thread);
+    if (!mp4::begin(fileWrite, g_video, g_vBuf, kVBufSize, g_audio, g_aBuf, kABufSize,
+                    kSPS + 4, sizeof(kSPS) - 4, kPPS + 4, sizeof(kPPS) - 4, 1280, 720)) {
+        closeFile();
+        s.recMsg = errText(s.lastError, buf, sizeof(buf));
+        return false;
+    }
+
+    rc = threadCreate(&s.vThread, videoThreadMain, nullptr, nullptr, 0x4000, 0x2C, -2);
+    if (R_SUCCEEDED(rc)) rc = threadStart(&s.vThread);
     if (R_FAILED(rc)) {
-        s.recording = false;
-        fsFileClose(&s.file);
-        fsFsClose(&s.sdfs);
+        closeFile();
         s.recMsg = errText(rc, buf, sizeof(buf));
         return false;
     }
-    s.threadValid = true;
+    s.vThreadValid = true;
+    s.recording = true;
+
+    // 音声は失敗しても映像だけで録画を続ける
+    if (R_SUCCEEDED(threadCreate(&s.aThread, audioThreadMain, nullptr, nullptr, 0x4000, 0x2C, -2))) {
+        if (R_SUCCEEDED(threadStart(&s.aThread))) s.aThreadValid = true;
+        else threadClose(&s.aThread);
+    }
+
     s.startTick = armGetSystemTick();
     s.recMsg = "Recording";
     return true;
@@ -222,13 +300,14 @@ inline bool start() {
 // 録画停止。メインスレッドから呼ぶ
 inline void stop() {
     State &s = state();
-    if (!s.threadValid) return;
+    if (!s.vThreadValid && !s.aThreadValid) return;
     s.stopRequest = true;
-    // 次のフレームが届けばスレッドは終わる(通常33ms以内)
-    if (R_SUCCEEDED(waitSingleHandle(s.thread.handle, 1'000'000'000ULL))) {
-        threadClose(&s.thread);
-        s.threadValid = false;
-    }
+    // 次のデータが届けばスレッドは終わる(通常数十ms以内)
+    bool done = joinThread(s.vThread, s.vThreadValid, 1'000'000'000ULL);
+    done = joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL) && done;
+    if (done) closeFile();
+    s.recording = false;
+
     char buf[48];
     if (s.lastError != 0) {
         s.recMsg = errText(s.lastError, buf, sizeof(buf));
@@ -237,7 +316,8 @@ inline void stop() {
         if (sec == 0 && s.bytesWritten.load() < 4096)
             snprintf(buf, sizeof(buf), "No video data");
         else
-            snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0);
+            snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB%s", sec / 60, sec % 60,
+                     s.bytesWritten.load() / 1048576.0, s.audioError ? " (no sound)" : "");
         s.recMsg = buf;
     }
 }
@@ -245,15 +325,14 @@ inline void stop() {
 // 録画スレッドがエラーで勝手に止まったときの後始末(毎フレーム呼んでよい)
 inline void poll() {
     State &s = state();
-    if (s.threadValid && !s.recording) {
-        stop();
-    }
+    if (s.recording && s.stopRequest.load()) stop();
 }
 
 inline void shutdown() {
     State &s = state();
     if (s.recording) stop();
-    if (s.grcdOpen) grcdExit();
+    if (serviceIsActive(&g_grcdVideo)) serviceClose(&g_grcdVideo);
+    if (serviceIsActive(&g_grcdAudio)) serviceClose(&g_grcdAudio);
     if (s.capsReady) capsscExit();
 }
 
