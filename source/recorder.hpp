@@ -38,8 +38,8 @@ inline void init() {
         snprintf(buf, sizeof(buf), "Init err 0x%X", rc);
         s.shotMsg = buf;
     }
-    mkdir("sdmc:/switch", 0777);
-    mkdir("sdmc:/switch/rec-menu", 0777);
+    // 注意: ここではSDカードがまだマウントされていないので、SDには触らない。
+    // (以前はここで mkdir していて、起動直後にクラッシュしていた)
 }
 
 inline void shutdown() {
@@ -97,25 +97,36 @@ inline bool screenshot() {
         return false;
     }
 
-    // 空いているファイル名を探す(上書き防止)
-    char path[96];
     u32 idx = s.nextIndex;
-    do {
-        snprintf(path, sizeof(path), "sdmc:/switch/rec-menu/shot_%05u.jpg", idx);
-        idx++;
-    } while (fileExists(path) && idx < 100000);
+    // SDカードはこの中でだけマウントされる(Teslaの仕様)
+    bool ok = false;
+    tsl::hlp::doWithSDCardHandle([&]() {
+        mkdir("sdmc:/switch", 0777);
+        mkdir("sdmc:/switch/rec-menu", 0777);
 
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        s.shotMsg = "SD write err";
-        return false;
-    }
-    size_t written = fwrite(jpegBuf, 1, static_cast<size_t>(jpegSize), f);
-    fclose(f);
-    if (written != jpegSize) {
-        s.shotMsg = "SD write short";
-        return false;
-    }
+        // 空いているファイル名を探す(上書き防止)
+        char path[96];
+        u32 i = s.nextIndex;
+        bool found = false;
+        for (; i < 100000; i++) {
+            snprintf(path, sizeof(path), "sdmc:/switch/rec-menu/shot_%05u.jpg", i);
+            if (!fileExists(path)) { found = true; break; }
+        }
+        if (!found) { s.shotMsg = "No free name"; return; }
+
+        FILE *f = fopen(path, "wb");
+        if (!f) { s.shotMsg = "SD write err"; return; }
+        size_t written = fwrite(jpegBuf, 1, static_cast<size_t>(jpegSize), f);
+        int closeRc = fclose(f);
+        if (written != jpegSize || closeRc != 0) {
+            remove(path);
+            s.shotMsg = "SD write failed";
+            return;
+        }
+        idx = i + 1;
+        ok = true;
+    });
+    if (!ok) return false;
 
     s.nextIndex = idx;
     s.savedCount++;

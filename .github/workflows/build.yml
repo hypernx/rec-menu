@@ -38,4 +38,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ovl
-          path: tpl/*.ovl
+          path: |
+            tpl/*.ovl
+            tpl/*.elf

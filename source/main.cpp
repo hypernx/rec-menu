@@ -12,7 +12,7 @@ public:
     RecGui() {}
 
     virtual tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.2.1");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.2.3");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader("Recording"));
