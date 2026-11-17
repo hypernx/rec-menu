@@ -40,9 +40,15 @@ jobs:
         run: |
           cd tpl
           make
+          echo '--- debug files ---'
+          find . -maxdepth 3 -type f \( -name '*.elf' -o -name '*.map' -o -name '*.ovl' \) -print
 
-      - name: Upload ovl
+      - name: Upload ovl and debug symbols
         uses: actions/upload-artifact@v4
         with:
-          name: ovl
-          path: tpl/*.ovl
+          name: ovl-debug
+          path: |
+            tpl/*.ovl
+            tpl/*.elf
+            tpl/*.map
+          if-no-files-found: error
