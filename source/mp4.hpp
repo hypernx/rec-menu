@@ -1,6 +1,7 @@
 #pragma once
 #include <switch.h>
 #include <cstring>
+#include <cmath>
 #include <atomic>
 
 // grc:d の映像(H.264)と音声(PCM)を、その場で MP4 (fragmented MP4) にして書き出す最小限のライター。
@@ -34,6 +35,7 @@ struct VideoTrack {
     u64 firstTs = 0;            // 最初のフレームの時刻(これが動画の0秒)
     u64 fragStart = 0;          // このフラグメントの開始時刻(firstTs基準)
     u64 lastTs = 0;
+    u64 firstArrivalUs = 0;     // 最初のフレームを受け取った本体時刻
     std::atomic<bool> started{false};   // 最初のIDRを受け取ったか
 };
 
@@ -45,6 +47,9 @@ struct AudioTrack {
     bool started = false;
     u64 fragStart = 0;          // このフラグメントの開始位置(サンプル数、動画の0秒基準)
     u64 nextPos = 0;            // 次に来るはずの位置(サンプル数)
+    u64 tsBase = 0;             // 音声のタイムスタンプ → 位置 の対応(基準点)
+    u64 posBase = 0;
+    u64 lastTs = 0;
 };
 
 // ---- ビッグエンディアンで書く小さなヘルパー ----
@@ -112,7 +117,7 @@ inline bool begin(WriteFn fn, VideoTrack &v, u8 *vbuf, size_t vcap, AudioTrack &
     v.write = fn; v.buf = vbuf; v.cap = vcap; v.len = 0; v.count = 0;
     v.firstTs = 0; v.fragStart = 0; v.lastTs = 0; v.started = false;
     a.write = fn; a.buf = abuf; a.cap = acap; a.len = 0;
-    a.started = false; a.fragStart = 0; a.nextPos = 0;
+    a.started = false; a.fragStart = 0; a.nextPos = 0; a.tsBase = 0; a.posBase = 0; a.lastTs = 0;
     g_seq = 0;
 
     static u8 hdr[1536];
@@ -241,7 +246,7 @@ inline bool flushVideo(VideoTrack &w) {
 }
 
 // 1パケット(Annex-B形式、通常NAL 1個)を1フレームとして追加する
-inline bool addVideo(VideoTrack &w, const u8 *data, size_t size, u64 ts) {
+inline bool addVideo(VideoTrack &w, const u8 *data, size_t size, u64 ts, u64 arrivalUs) {
     size_t sc = (size >= 4 && data[2] == 1) ? 3 : 4;
     if (size <= sc) return true;
     const u8 nalType = data[sc] & 0x1F;
@@ -252,6 +257,7 @@ inline bool addVideo(VideoTrack &w, const u8 *data, size_t size, u64 ts) {
         if (!isIDR) return true;   // 最初は必ずキーフレームから
         w.firstTs = ts;
         w.lastTs = ts;
+        w.firstArrivalUs = arrivalUs;
         w.started = true;
     } else if (w.count > 0) {
         // 1つ前のフレームの長さが、今のフレームの時刻でわかる
@@ -340,33 +346,48 @@ inline bool flushAudio(AudioTrack &a) {
     return true;
 }
 
-// 音声パケット(PCM)を追加する。映像が始まる前の音は捨て、映像の0秒に合わせる
-inline bool addAudio(AudioTrack &a, const VideoTrack &v, const u8 *data, size_t size, u64 ts) {
+// 音声パケット(PCM)を追加する。映像が始まる前の音は捨て、映像の0秒に合わせる。
+// arrivalUs はこのパケットを受け取った本体時刻(マイクロ秒)。
+// 映像と音声のタイムスタンプが同じ基準ならそれで合わせ、基準が違いそうなら受け取った時刻で合わせる。
+inline bool addAudio(AudioTrack &a, const VideoTrack &v, const u8 *data, size_t size, u64 ts, u64 arrivalUs) {
     size -= size % kAudioFrame;
     if (size == 0 || !v.started) return true;
 
-    // このパケットの位置(動画の0秒からのサンプル数)
-    s64 pos;
-    if (ts >= v.firstTs) pos = s64((ts - v.firstTs) * kAudioRate / 1000000ULL);
-    else                 pos = -s64((v.firstTs - ts) * kAudioRate / 1000000ULL);
-
     if (!a.started) {
-        if (pos < 0) {   // 映像より前の部分は切り捨てる
-            const size_t skip = size_t(-pos) * kAudioFrame;
+        // タイムスタンプで計算した位置
+        const double byTs = (double(ts) - double(v.firstTs)) * kAudioRate / 1e6;
+        // 受け取った時刻で計算した位置(このパケットの「終わり」が今なので、長さの分だけ戻す)
+        const double byArrival = (double(arrivalUs) - double(v.firstArrivalUs)) * kAudioRate / 1e6
+                                 - double(size / kAudioFrame);
+        // 両者が1秒以上違うなら、タイムスタンプの基準が映像と違うとみなす
+        double pos = (ts != 0 && std::fabs(byTs - byArrival) < kAudioRate) ? byTs : byArrival;
+        s64 ipos = s64(pos);
+        if (ipos < 0) {   // 映像より前の部分は切り捨てる
+            const size_t skip = size_t(-ipos) * kAudioFrame;
             if (skip >= size) return true;
-            data += skip; size -= skip; pos = 0;
+            data += skip; size -= skip;
+            ts += u64(-ipos) * 1000000ULL / kAudioRate;
+            ipos = 0;
         }
         a.started = true;
-        a.fragStart = u64(pos);
-        a.nextPos = u64(pos);
-    }
-
-    // HOMEメニュー等で音が途切れたら、新しいフラグメントを正しい位置から始める
-    const s64 gap = pos - s64(a.nextPos);
-    if (gap > s64(kAudioRate / 20) || gap < -s64(kAudioRate / 20)) {
-        if (!flushAudio(a)) return false;
-        if (pos > s64(a.fragStart)) a.fragStart = u64(pos);
-        a.nextPos = a.fragStart;
+        a.fragStart = u64(ipos);
+        a.nextPos = u64(ipos);
+        a.tsBase = ts;
+        a.posBase = u64(ipos);
+        a.lastTs = ts;
+    } else {
+        // タイムスタンプが進んでいなければ(0固定など)、続きとして扱う
+        if (ts > a.lastTs) {
+            const u64 pos = a.posBase + (ts - a.tsBase) * kAudioRate / 1000000ULL;
+            const s64 gap = s64(pos) - s64(a.nextPos);
+            // HOMEメニュー等で音が途切れたら、新しいフラグメントを正しい位置から始める
+            if (gap > s64(kAudioRate / 20)) {
+                if (!flushAudio(a)) return false;
+                a.fragStart = pos;
+                a.nextPos = pos;
+            }
+            a.lastTs = ts;
+        }
     }
 
     while (size > 0) {

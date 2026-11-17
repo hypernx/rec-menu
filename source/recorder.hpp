@@ -41,6 +41,7 @@ struct State {
     std::atomic<u64> recordedUs{0};     // 動画として書けた長さ
     std::atomic<u32> lastError{0};
     std::atomic<u32> audioError{0};
+    std::atomic<u32> audioPackets{0};   // 受け取った音声パケット数(確認用)
     u32 nextRecIndex = 0;
     char recPath[64] = {};
     std::string recMsg = "Ready";
@@ -100,6 +101,8 @@ static Service g_grcdVideo;
 static Service g_grcdAudio;
 static std::atomic<bool> g_beginCalled{false};
 
+inline u64 nowUs() { return armTicksToNs(armGetSystemTick()) / 1000ULL; }
+
 inline Result grcdOpen(Service *srv) {
     if (serviceIsActive(srv)) return 0;
     return smGetService(srv, "grc:d");
@@ -154,7 +157,7 @@ inline void videoThreadMain(void *) {
         if (R_FAILED(rc)) { s.lastError = rc; break; }
         if (dataSize <= 4) continue;
 
-        if (!mp4::addVideo(g_video, g_vXfer, dataSize, ts)) break;
+        if (!mp4::addVideo(g_video, g_vXfer, dataSize, ts, nowUs())) break;
         s.recordedUs = mp4::durationUs(g_video);
     }
     mp4::flushVideo(g_video);
@@ -175,7 +178,8 @@ inline void audioThreadMain(void *) {
             s.audioError = rc;
             break;
         }
-        if (!mp4::addAudio(g_audio, g_video, g_aXfer, dataSize, ts)) break;
+        s.audioPackets++;
+        if (!mp4::addAudio(g_audio, g_video, g_aXfer, dataSize, ts, nowUs())) break;
     }
     mp4::flushAudio(g_audio);
 }
@@ -266,6 +270,7 @@ inline bool start() {
     s.recordedUs = 0;
     s.lastError = 0;
     s.audioError = 0;
+    s.audioPackets = 0;
     s.stopRequest = false;
     mutexInit(&g_fileLock);
 
@@ -316,8 +321,14 @@ inline void stop() {
         if (sec == 0 && s.bytesWritten.load() < 4096)
             snprintf(buf, sizeof(buf), "No video data");
         else
+        {
+            char snd[24];
+            if (s.audioError) snprintf(snd, sizeof(snd), " snd:%04u-%04u", 2000 + R_MODULE(s.audioError.load()), R_DESCRIPTION(s.audioError.load()));
+            else if (s.audioPackets == 0) snprintf(snd, sizeof(snd), " snd:0");
+            else snd[0] = 0;
             snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB%s", sec / 60, sec % 60,
-                     s.bytesWritten.load() / 1048576.0, s.audioError ? " (no sound)" : "");
+                     s.bytesWritten.load() / 1048576.0, snd);
+        }
         s.recMsg = buf;
     }
 }

@@ -28,6 +28,9 @@ extern "C" {
 }
 
 static const char *kDir = "sdmc:/switch/rec-menu";
+
+// ffmpeg に渡すパス。"sdmc:/..." のままだと "sdmc" を通信方式の名前だと思って開けないので "file:" を付ける
+static std::string avPath(const std::string &p) { return "file:" + p; }
 constexpr int W = 1280, H = 720;
 
 static SDL_Window *g_win = nullptr;
@@ -138,6 +141,7 @@ struct Entry {
     SDL_Texture *thumb = nullptr;
     bool thumbTried = false;
     double duration = -1;
+    bool hasAudio = false;
 };
 static std::vector<Entry> g_entries;
 
@@ -172,9 +176,10 @@ static void scanDir() {
 static void makeThumb(Entry &e) {
     e.thumbTried = true;
     AVFormatContext *fmt = nullptr;
-    if (avformat_open_input(&fmt, e.path.c_str(), nullptr, nullptr) < 0) return;
+    if (avformat_open_input(&fmt, avPath(e.path).c_str(), nullptr, nullptr) < 0) return;
     if (avformat_find_stream_info(fmt, nullptr) < 0) { avformat_close_input(&fmt); return; }
     if (fmt->duration > 0) e.duration = fmt->duration / double(AV_TIME_BASE);
+    e.hasAudio = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0) >= 0;
 
     const AVCodec *codec = nullptr;
     int vi = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
@@ -273,7 +278,7 @@ static void closePlayer(Player &p) {
 }
 
 static bool openPlayer(Player &p, const std::string &path, std::string &err) {
-    if (avformat_open_input(&p.fmt, path.c_str(), nullptr, nullptr) < 0) { err = "ファイルを開けません"; return false; }
+    if (avformat_open_input(&p.fmt, avPath(path).c_str(), nullptr, nullptr) < 0) { err = "ファイルを開けません"; return false; }
     if (avformat_find_stream_info(p.fmt, nullptr) < 0) { err = "動画の情報を読めません"; return false; }
     p.duration = p.fmt->duration > 0 ? p.fmt->duration / double(AV_TIME_BASE) : 0;
 
@@ -600,7 +605,8 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
     if (!g_entries.empty() && sel < int(g_entries.size())) {
         const Entry &e = g_entries[sel];
         char info[96];
-        snprintf(info, sizeof(info), "%.1f MB", e.size / 1048576.0);
+        snprintf(info, sizeof(info), "%.1f MB%s", e.size / 1048576.0,
+                 !e.thumbTried ? "" : (e.hasAudio ? "   音声あり" : "   音声なし"));
         drawText(g_fontS, info, 36, H - 38, kGray);
     }
     drawText(g_fontS, "A: 再生    X: 削除    Y: 更新    +: 終了", W - 36, H - 38, kWhite, Right);
