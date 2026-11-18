@@ -94,7 +94,8 @@ jobs:
           path: out/*
 
   # リリースページを作ってファイルを載せる
-  #  - main に push したとき: source/main.cpp のバージョン(例: v0.7.0)のリリースがまだ無ければ作る
+  #  - main に push したとき: source/main.cpp のバージョン(例: v0.7.0)のリリースを作る
+  #    (もうあれば、文章とファイルを差し替える)
   #  - v から始まるタグを push したとき: そのタグでリリースを作る
   release:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
@@ -116,9 +117,9 @@ jobs:
         run: |
           cd dist
           for L in en ja; do
-            rm -rf sd && mkdir -p sd/switch/.overlays sd/switch/RecGallery
+            rm -rf sd && mkdir -p sd/switch/.overlays
             cp RecMenu-$L.ovl sd/switch/.overlays/RecMenu.ovl
-            cp RecGallery-$L.nro sd/switch/RecGallery/RecGallery.nro
+            cp RecGallery-$L.nro sd/switch/RecGallery.nro
             (cd sd && zip -qr ../RecMenu-RecGallery-$L.zip switch)
           done
           zip -q debug-symbols.zip *.elf
@@ -135,8 +136,12 @@ jobs:
             TAG=$(grep -oE '"v[0-9.]+"' source/main.cpp | head -1 | tr -d '"')
           fi
           echo "tag: $TAG"
+          FILES="dist/RecMenu-RecGallery-en.zip dist/RecMenu-RecGallery-ja.zip dist/RecMenu-en.ovl dist/RecMenu-ja.ovl dist/RecGallery-en.nro dist/RecGallery-ja.nro dist/debug-symbols.zip"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists. Nothing to do."
+            # 同じバージョンのリリースがあれば、文章とファイルを最新に差し替える
+            echo "Release $TAG already exists. Updating notes and files."
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file .github/release-notes.md
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber $FILES
             exit 0
           fi
           gh release create "$TAG" \
@@ -144,7 +149,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Rec Menu & Rec Gallery $TAG" \
             --notes-file .github/release-notes.md \
-            dist/RecMenu-RecGallery-en.zip dist/RecMenu-RecGallery-ja.zip \
-            dist/RecMenu-en.ovl dist/RecMenu-ja.ovl \
-            dist/RecGallery-en.nro dist/RecGallery-ja.nro \
-            dist/debug-symbols.zip
+            $FILES
