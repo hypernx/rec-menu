@@ -17,7 +17,7 @@ DATA        := data
 INCLUDES    := include
 APP_TITLE   := Rec Gallery
 APP_AUTHOR  := hypernx
-APP_VERSION := 0.2.0
+APP_VERSION := 0.3.0
 
 PKGCONF := $(PORTLIBS)/bin/aarch64-none-elf-pkg-config
 PKGS    := SDL2_ttf SDL2_image sdl2 libavformat libavcodec libswscale libswresample libavutil

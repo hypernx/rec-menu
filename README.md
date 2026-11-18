@@ -39,9 +39,10 @@ Everything is saved to the SD card. No PC, Wi‑Fi or phone is needed.
 
 - **Two tabs, Videos and Photos**: each shows thumbnails with the date and time it was taken.
 - **Sorting**: newest first, oldest first, largest first, or smallest first.
-- **Video player**: pause, skip ±10 s / ±30 s, and a progress bar.
+- **Video player**: pause, skip ±10 s / ±30 s, and a progress bar you can drag with your finger.
 - **Photo viewer**: full screen, step to the previous or next photo.
 - **Delete**: asks you to confirm first.
+- **Touch screen**: tap to open, drag to scroll, drag the progress bar, swipe between photos.
 
 ---
 
@@ -107,6 +108,21 @@ While recording, **B** only hides the menu. It does not stop the recording.
 | | **X** | Delete |
 | | **B** | Back to the list |
 
+**Touch screen** (handheld mode):
+
+| Screen | Touch | Action |
+|---|---|---|
+| List | Tap a thumbnail | Play the video / open the photo |
+| | Drag up / down | Scroll |
+| | Tap a tab or the sort order | Switch tabs / change the sort order |
+| Video | Tap | Show the controls, then pause / resume |
+| | Drag along the progress bar | Jump to that position |
+| | Tap **＜ 戻る** (top-left) | Back to the list |
+| Photo | Swipe left / right | Next / previous photo |
+| | Tap | Show / hide the info bar |
+| | Tap **X: 削除** (bottom-right) | Delete (asks to confirm) |
+| | Tap **＜ 戻る** (top-left) | Back to the list |
+
 ---
 
 ### Limitations
@@ -117,25 +133,6 @@ While recording, **B** only hides the menu. It does not stop the recording.
 - **Cannot be used with SysDVR.** Both use the same video stream. Rec Menu shows an error if SysDVR is running.
 - **The timer and notifications are experimental.** Overlays only get a small amount of memory (4 MB on recent firmware). If **Notification display** shows something other than `OK`, the timer and notifications are unavailable, but recording still works.
 - **Rec Gallery plays videos in software (CPU only).** Playback may stutter depending on conditions.
-
----
-
-### Building
-
-You do not need a PC to build. GitHub Actions builds both components on every push.
-
-- Workflow: `.github/workflows/build.yml`
-  - **build-ovl**: builds Rec Menu with libtesla from [Tesla-Template](https://github.com/WerWolv/Tesla-Template). A small patch to libtesla adds the HOME button and shutdown hooks and keeps the overlay out of recordings.
-  - **gallery**: builds Rec Gallery with devkitPro `switch-ffmpeg`, `switch-sdl2`, `switch-sdl2_ttf` and `switch-sdl2_image`.
-- Artifacts:
-  - `ovl` (`tpl.ovl` + `tpl.elf`)
-  - `nro` (`RecGallery.nro` + `RecGallery.elf`)
-
-  The `.elf` files are debug symbols for reading crash reports.
-
-#### Reading a crash report
-
-If the console shows a crash report (`/atmosphere/crash_reports/*.log`), look up the `tpl + 0x…` addresses with `aarch64-none-elf-addr2line -f -C -e tpl.elf 0x…`. Use the `.elf` from the same build that crashed.
 
 ---
 
@@ -198,9 +195,10 @@ Use at your own risk.
 
 - **動画と写真のタブ**：それぞれサムネイルと撮影日時が一覧で出ます。
 - **並び替え**：新しい順・古い順・大きい順・小さい順を切り替えられます。
-- **動画の再生**：一時停止、10秒・30秒の早送りと巻き戻し、再生位置のバーがあります。
+- **動画の再生**：一時停止、10秒・30秒の早送りと巻き戻し、指でなぞって動かせる再生位置のバーがあります。
 - **写真の表示**：全画面で表示して、前後の写真に移動できます。
 - **削除**：削除する前に確認が出ます。
+- **タッチ操作**：タップで開く、ドラッグでスクロール、再生バーをなぞって移動、スワイプで写真を切り替え。
 
 ---
 
@@ -266,6 +264,21 @@ Ultrahandを開くボタン（初期設定は **L＋十字キー下＋右ステ�
 | | **X** | 削除する |
 | | **B** | 一覧に戻る |
 
+**タッチ操作**（携帯モード）：
+
+| 画面 | タッチ | 操作 |
+|---|---|---|
+| 一覧 | サムネイルをタップ | 動画を再生する / 写真を表示する |
+| | 上下にドラッグ | スクロールする |
+| | タブや並び順をタップ | タブを切り替える / 並び順を変える |
+| 動画 | タップ | 操作バーを出す。出ているときは一時停止 / 再開 |
+| | 再生バーをなぞる | その位置に移動する |
+| | 左上の **＜ 戻る** をタップ | 一覧に戻る |
+| 写真 | 左右にスワイプ | 次の写真 / 前の写真 |
+| | タップ | 情報バーを出す / 消す |
+| | 右下の **X: 削除** をタップ | 削除する（確認が出ます） |
+| | 左上の **＜ 戻る** をタップ | 一覧に戻る |
+
 ---
 
 ### できないこと・注意点
@@ -276,25 +289,6 @@ Ultrahandを開くボタン（初期設定は **L＋十字キー下＋右ステ�
 - **SysDVRとは同時に使えません。** 同じ映像を使うためです。SysDVRが動いているときは、録画を始めようとするとエラーが出ます。
 - **タイマーと通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **Notification display** が `OK` 以外になっているときは、タイマーと通知は出ません。録画はそのままできます。
 - **Rec GalleryはCPUだけで動画を再生しています。** 状況によっては再生がカクつくことがあります。
-
----
-
-### ビルド方法
-
-パソコンがなくてもビルドできます。GitHubにpushするたびに、GitHub Actionsが2つとも自動でビルドします。
-
-- ワークフロー：`.github/workflows/build.yml`
-  - **build-ovl**：[Tesla-Template](https://github.com/WerWolv/Tesla-Template) のlibteslaを使ってRec Menuをビルドします。その際、libteslaに小さなパッチを当てています（HOMEボタンと終了処理のフックを追加し、オーバーレイが録画に写らないようにする）。
-  - **gallery**：devkitProの `switch-ffmpeg`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-sdl2_image` を使ってRec Galleryをビルドします。
-- 成果物：
-  - `ovl`（`tpl.ovl` と `tpl.elf`）
-  - `nro`（`RecGallery.nro` と `RecGallery.elf`）
-
-  `.elf` はクラッシュログを調べるためのデバッグ情報です。
-
-#### クラッシュログの調べ方
-
-本体が落ちてクラッシュログ（`/atmosphere/crash_reports/*.log`）が出たときは、その中の `tpl + 0x…` という番号を `aarch64-none-elf-addr2line -f -C -e tpl.elf 0x…` で調べると、落ちた場所がわかります。落ちたときと同じビルドの `.elf` を使ってください。
 
 ---
 

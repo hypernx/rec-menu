@@ -2,6 +2,9 @@
 //
 // 操作:
 //   一覧   … 十字キー: 選択   A: 再生/表示   X: 削除   L/R: 動画⇔写真   −: 並び替え   Y: 更新   +/B: 終了
+//            タッチ: サムネイルをタップで開く、上下にドラッグでスクロール、タブ・並び順もタップで切り替え
+//   動画(タッチ) … タップ: 一時停止/再開   再生バーをなぞる: 好きな位置へ   左上「戻る」: 一覧へ
+//   写真(タッチ) … 左右にスワイプ: 前/次   タップ: 表示の切り替え   右下「削除」・左上「戻る」
 //   動画   … A: 一時停止/再開   ←/→: 10秒戻る/進む   L/R: 30秒戻る/進む   B: 一覧に戻る
 //   写真   … ←/→: 前/次   X: 削除   B: 一覧に戻る
 #include <switch.h>
@@ -14,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <deque>
@@ -115,9 +119,52 @@ static const SDL_Color kCyan{ 0, 220, 200, 255 };
 static const SDL_Color kRed{ 255, 90, 90, 255 };
 
 // ---------------------------------------------------------------------------
-// 入力(押しっぱなしでの連続移動つき)
+// 入力(ボタンは押しっぱなしでの連続移動つき。タッチはタップとドラッグ)
 // ---------------------------------------------------------------------------
-struct Input { u64 down = 0; u64 held = 0; u64 repeat = 0; };
+static u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
+
+struct Touch {
+    bool down = false;   // 触った瞬間
+    bool held = false;   // 触っている間
+    bool up = false;     // 離した瞬間
+    bool tap = false;    // 動かさずに短く触って離した
+    bool moved = false;  // 触ってから24px以上動いた
+    int x = 0, y = 0;    // 今の位置(離した瞬間は最後の位置)
+    int sx = 0, sy = 0;  // 触り始めた位置
+    int dx() const { return x - sx; }
+    int dy() const { return y - sy; }
+};
+
+struct Input { u64 down = 0; u64 held = 0; u64 repeat = 0; Touch t; };
+
+static Touch readTouch() {
+    static bool was = false, moved = false;
+    static int sx = 0, sy = 0, lx = 0, ly = 0;
+    static u64 startMs = 0;
+    HidTouchScreenState st{};
+    hidGetTouchScreenStates(&st, 1);
+    const bool now = st.count > 0;
+    Touch t;
+    if (now) { t.x = int(st.touches[0].x); t.y = int(st.touches[0].y); }
+    if (now && !was) { sx = t.x; sy = t.y; startMs = nowMs(); moved = false; t.down = true; }
+    if (now) {
+        t.held = true;
+        if (std::abs(t.x - sx) > 24 || std::abs(t.y - sy) > 24) moved = true;
+        lx = t.x; ly = t.y;
+    }
+    if (!now && was) {
+        t.up = true;
+        t.x = lx; t.y = ly;
+        t.tap = !moved && nowMs() - startMs < 600;
+    }
+    t.sx = sx; t.sy = sy; t.moved = moved;
+    was = now;
+    return t;
+}
+
+static bool hit(const Touch &t, int x, int y, int w, int h) {
+    return t.x >= x && t.x < x + w && t.y >= y && t.y < y + h;
+}
 
 static Input readInput() {
     static u64 heldSince = 0, lastRepeat = 0, lastDir = 0;
@@ -131,6 +178,7 @@ static Input readInput() {
     in.repeat = in.down & dirs;
     if (d != lastDir) { heldSince = now; lastRepeat = now; lastDir = d; }
     else if (d && now - heldSince > 350 && now - lastRepeat > 90) { in.repeat |= d; lastRepeat = now; }
+    in.t = readTouch();
     return in;
 }
 
@@ -308,9 +356,19 @@ struct Player {
     double seekTarget = -1;             // シーク直後、この時刻より前のフレームは捨てる
     double shown = 0;                   // 最後に表示したフレームの時刻
     u64 osdUntil = 0;                   // 再生バーを出しておく時刻
+    bool scrubbing = false;             // 再生バーを指でなぞっている
+    double scrubPos = 0;
 };
 
-static u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
+// 再生バーの位置(タッチ判定にも使う)
+constexpr int kBarX = 40, kBarY = H - 80, kBarW = W - 80, kBarH = 8;
+// 左上の「戻る」ボタン
+constexpr int kBackW = 150, kBackH = 64;
+
+static void drawBackButton() {
+    fillRect(12, 10, kBackW - 24, kBackH - 20, 255, 255, 255, 40);
+    drawText(g_fontS, "＜ 戻る", kBackW / 2, 20, kWhite, Center);
+}
 
 static double clockPos(const Player &p) {
     if (p.paused) return p.base;
@@ -503,17 +561,23 @@ static void togglePause(Player &p) {
 }
 
 static void drawPlayerOsd(const Player &p, const std::string &title) {
-    const double pos = std::min(p.shown, p.duration > 0 ? p.duration : p.shown);
-    fillRect(0, 0, W, 64, 0, 0, 0, 160);
-    drawText(g_fontM, title, 30, 16, kWhite);
+    double pos = p.scrubbing ? p.scrubPos : std::min(p.shown, p.duration > 0 ? p.duration : p.shown);
+    fillRect(0, 0, W, kBackH, 0, 0, 0, 160);
+    drawBackButton();
+    drawText(g_fontM, title, kBackW + 10, 16, kWhite);
     fillRect(0, H - 96, W, 96, 0, 0, 0, 160);
-    const int bx = 40, by = H - 80, bw = W - 80, bh = 8;
-    fillRect(bx, by, bw, bh, 90, 90, 90);
-    if (p.duration > 0) fillRect(bx, by, int(bw * std::clamp(pos / p.duration, 0.0, 1.0)), bh, 0, 220, 200);
-    drawText(g_fontS, fmtTime(pos) + " / " + fmtTime(p.duration), bx, by + 18, kWhite);
-    drawText(g_fontS, std::string(p.paused ? "A: 再生" : "A: 一時停止") + "    ←→: 10秒   L/R: 30秒   B: 戻る",
-             W - 40, by + 18, kGray, Right);
-    if (p.paused) drawText(g_fontL, "一時停止中", W / 2, H / 2 - 24, kWhite, Center);
+    fillRect(kBarX, kBarY, kBarW, kBarH, 90, 90, 90);
+    if (p.duration > 0) {
+        const int fw = int(kBarW * std::clamp(pos / p.duration, 0.0, 1.0));
+        fillRect(kBarX, kBarY, fw, kBarH, 0, 220, 200);
+        // つまみ
+        const int r = p.scrubbing ? 14 : 10;
+        fillRect(kBarX + fw - r, kBarY + kBarH / 2 - r, r * 2, r * 2, 0, 220, 200);
+    }
+    drawText(g_fontS, fmtTime(pos) + " / " + fmtTime(p.duration), kBarX, kBarY + 22, kWhite);
+    drawText(g_fontS, std::string(p.paused ? "A/タップ: 再生" : "A/タップ: 一時停止") + "    ←→: 10秒   L/R: 30秒   バーをなぞる: 移動",
+             W - 40, kBarY + 22, kGray, Right);
+    if (p.paused && !p.scrubbing) drawText(g_fontL, "一時停止中", W / 2, H / 2 - 24, kWhite, Center);
 }
 
 static void playVideo(const Entry &e) {
@@ -545,6 +609,24 @@ static void playVideo(const Entry &e) {
         if (in.down & HidNpadButton_R)        seekTo(p, clockPos(p) + 30);
         if (in.down & (HidNpadButton_AnyUp | HidNpadButton_AnyDown | HidNpadButton_Y | HidNpadButton_X))
             p.osdUntil = nowMs() + 2500;
+
+        // ---- タッチ ----
+        const Touch &t = in.t;
+        const bool osdShown = p.paused || nowMs() < p.osdUntil;
+        // 再生バーの近く(上下に広めに)を触ったら、指の位置まで移動する
+        if (t.down && p.duration > 0 && t.y >= kBarY - 50 && t.y <= kBarY + 50) p.scrubbing = true;
+        if (p.scrubbing) {
+            p.scrubPos = std::clamp(double(t.x - kBarX) / kBarW, 0.0, 1.0) * p.duration;
+            p.osdUntil = nowMs() + 2500;
+            if (t.up) {
+                p.scrubbing = false;
+                seekTo(p, p.scrubPos);
+            }
+        } else if (t.tap) {
+            if (osdShown && hit(t, 0, 0, kBackW, kBackH)) break;   // 戻る
+            if (!osdShown) p.osdUntil = nowMs() + 2500;            // まずバーを出す
+            else togglePause(p);
+        }
 
         if (!p.paused) {
             decodeSome(p);
@@ -582,7 +664,7 @@ static void playVideo(const Entry &e) {
             SDL_Rect dst{ 0, 0, W, H };
             SDL_RenderCopy(g_ren, p.tex, nullptr, &dst);
         }
-        if (p.paused || nowMs() < p.osdUntil) drawPlayerOsd(p, e.name);
+        if (p.paused || p.scrubbing || nowMs() < p.osdUntil) drawPlayerOsd(p, e.name);
         SDL_RenderPresent(g_ren);
         trimTextCache();
     }
@@ -619,7 +701,21 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
         if ((in.repeat & HidNpadButton_AnyRight) || (in.down & HidNpadButton_R)) { if (sel + 1 < int(list.size())) sel++; osdUntil = nowMs() + 2500; }
         if ((in.repeat & HidNpadButton_AnyLeft) || (in.down & HidNpadButton_L))  { if (sel > 0) sel--; osdUntil = nowMs() + 2500; }
         if (in.down & (HidNpadButton_A | HidNpadButton_AnyUp | HidNpadButton_AnyDown)) osdUntil = nowMs() + 2500;
-        if (in.down & HidNpadButton_X) {
+
+        // ---- タッチ: 左右にスワイプで前/次、タップで表示の切り替え ----
+        const Touch &t = in.t;
+        bool wantDelete = false;
+        if (t.up && t.moved && std::abs(t.dx()) > 100 && std::abs(t.dx()) > std::abs(t.dy())) {
+            if (t.dx() < 0 && sel + 1 < int(list.size())) sel++;
+            if (t.dx() > 0 && sel > 0) sel--;
+            osdUntil = nowMs() + 2500;
+        } else if (t.tap) {
+            const bool shown = nowMs() < osdUntil;
+            if (shown && hit(t, 0, 0, kBackW, kBackH)) break;
+            if (shown && hit(t, W - 170, H - 56, 170, 56)) wantDelete = true;
+            else osdUntil = shown ? 0 : nowMs() + 2500;
+        }
+        if ((in.down & HidNpadButton_X) || wantDelete) {
             if (confirmDelete(sel, 0, "この写真を削除しますか？", true, tex)) {
                 deleteEntry(sel, toast);
                 toastUntil = nowMs() + 2500;
@@ -644,8 +740,9 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
         }
         if (nowMs() < osdUntil) {
             const Entry &e = list[sel];
-            fillRect(0, 0, W, 64, 0, 0, 0, 160);
-            drawText(g_fontM, e.name, 30, 16, kWhite);
+            fillRect(0, 0, W, kBackH, 0, 0, 0, 160);
+            drawBackButton();
+            drawText(g_fontM, e.name, kBackW + 10, 16, kWhite);
             char pos[32];
             snprintf(pos, sizeof(pos), "%d / %d", sel + 1, int(list.size()));
             drawText(g_fontS, pos, W - 30, 22, kGray, Right);
@@ -653,7 +750,9 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
             char info[96];
             snprintf(info, sizeof(info), "%s    %.1f MB", fmtDate(e.mtime).c_str(), e.size / 1048576.0);
             drawText(g_fontS, info, 30, H - 42, kGray);
-            drawText(g_fontS, "←→: 前/次    X: 削除    B: 戻る", W - 30, H - 42, kWhite, Right);
+            drawText(g_fontS, "←→/スワイプ: 前/次    B: 戻る", W - 200, H - 42, kGray, Right);
+            fillRect(W - 160, H - 50, 140, 44, 200, 60, 60, 200);
+            drawText(g_fontS, "X: 削除", W - 90, H - 42, kWhite, Center);
         }
         SDL_RenderPresent(g_ren);
         trimTextCache();
@@ -676,6 +775,14 @@ static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPho
         Input in = readInput();
         if (in.down & HidNpadButton_A) return true;
         if (in.down & (HidNpadButton_B | HidNpadButton_X)) return false;
+        {
+            const int bw = 640, bh = 240, bx = (W - bw) / 2, by = (H - bh) / 2;
+            if (in.t.tap) {
+                if (hit(in.t, W / 2 - 270, by + 140, 260, 70)) return true;    // 削除する
+                if (hit(in.t, W / 2 + 10, by + 140, 260, 70)) return false;    // やめる
+                if (!hit(in.t, bx, by, bw, bh)) return false;                  // 外側
+            }
+        }
 
         if (overPhoto) {
             SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
@@ -690,7 +797,9 @@ static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPho
         strokeRect(bx, by, bw, bh, 2, 90, 90, 96);
         drawText(g_fontM, what, W / 2, by + 40, kWhite, Center);
         drawText(g_fontS, e.name, W / 2, by + 92, kGray, Center);
-        drawText(g_fontM, "A: 削除する", W / 2 - 140, by + 160, kRed, Center);
+        fillRect(W / 2 - 270, by + 146, 260, 60, 120, 40, 40);
+        fillRect(W / 2 + 10, by + 146, 260, 60, 70, 70, 76);
+        drawText(g_fontM, "A: 削除する", W / 2 - 140, by + 160, kWhite, Center);
         drawText(g_fontM, "B: やめる", W / 2 + 140, by + 160, kWhite, Center);
         SDL_RenderPresent(g_ren);
     }
@@ -812,6 +921,55 @@ static void galleryLoop() {
             continue;
         }
 
+        // ---- タッチ ----
+        static int dragStartRow = 0;
+        const Touch &t = in.t;
+        if (t.down) dragStartRow = sr;
+        if (t.tap) {
+            // タブ
+            bool handled = false;
+            for (int tb = 0; tb < 2; tb++) {
+                if (hit(t, 36 + tb * 180, 48, 160, 56)) {
+                    g_tab = Tab(tb);
+                    handled = true;
+                }
+            }
+            if (handled) continue;
+            // 並び順
+            if (hit(t, W - 460, 0, 460, 48)) {
+                g_sort = SortMode((g_sort + 1) % SortCount);
+                sortList(g_lists[0]);
+                sortList(g_lists[1]);
+                sel[0] = sel[1] = 0;
+                scrollRow[0] = scrollRow[1] = 0;
+                toast = std::string("並び順: ") + kSortNames[g_sort];
+                toastUntil = nowMs() + 1500;
+                continue;
+            }
+            // サムネイル: タップで開く
+            if (t.y >= kGridY && t.y < H - 48 && t.x >= kGridX && t.x < kGridX + kCols * kCellW) {
+                const int col = (t.x - kGridX) / kCellW, row = (t.y - kGridY) / kCellH;
+                const int i = (sr + row) * kCols + col;
+                if (row < kVisibleRows && i < n) {
+                    s = i;
+                    in.down |= HidNpadButton_A;
+                }
+            }
+        }
+        // 上下にドラッグでスクロール
+        if (t.held && t.moved && std::abs(t.dy()) > std::abs(t.dx()) && n > 0) {
+            const int maxRow = std::max(0, (n - 1) / kCols - kVisibleRows + 1);
+            const int newRow = std::clamp(dragStartRow - int(std::lround(double(t.dy()) / kCellH)), 0, maxRow);
+            if (newRow != sr) {
+                sr = newRow;
+                // 選んでいる物を見えている範囲に入れる
+                const int col = s % kCols;
+                int row = s / kCols;
+                row = std::clamp(row, sr, sr + kVisibleRows - 1);
+                s = std::min(row * kCols + col, n - 1);
+            }
+        }
+
         if (n > 0) {
             if (in.repeat & HidNpadButton_AnyRight) s = std::min(s + 1, n - 1);
             if (in.repeat & HidNpadButton_AnyLeft)  s = std::max(s - 1, 0);
@@ -858,6 +1016,7 @@ static void galleryLoop() {
 int main(int argc, char **argv) {
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pad);
+    hidInitializeTouchScreen();
     plInitialize(PlServiceType_User);
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return 1;
