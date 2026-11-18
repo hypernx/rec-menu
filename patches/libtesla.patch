@@ -1,0 +1,93 @@
+diff --git a/include/tesla.hpp b/include/tesla.hpp
+index dfcd109..e752f4e 100644
+--- a/include/tesla.hpp
++++ b/include/tesla.hpp
+@@ -55,6 +55,17 @@
+ 
+ #define ELEMENT_BOUNDS(elem) elem->getX(), elem->getY(), elem->getWidth(), elem->getHeight()
+ 
++// ---- Rec Menu 用のフック ----
++namespace tsl::gfx { class Renderer; }
++namespace tsl::impl {
++    inline void (*onHomeButton)() = nullptr;          // HOMEボタンが押された(バックグラウンドスレッドから呼ばれる)
++    inline void (*onBeforeExitScreen)() = nullptr;    // 画面を片付ける直前
++    // メニューを閉じている間も描くもの(録画タイマー・通知)
++    inline bool (*hiddenVisible)() = nullptr;         // 何か表示するものがあるか
++    inline bool (*hiddenNeedsDraw)() = nullptr;       // 描き直しが必要か(動いている・内容が変わった)
++    inline void (*hiddenDraw)(tsl::gfx::Renderer *) = nullptr;
++}
++
+ #define ASSERT_EXIT(x) if (R_FAILED(x)) std::exit(1)
+ #define ASSERT_FATAL(x) if (Result res = x; R_FAILED(res)) fatalThrow(res)
+ 
+@@ -1050,8 +1061,6 @@ namespace tsl {
+                         ASSERT_FATAL(viSetLayerZ(&this->m_layer, layerZ));
+ 
+                     ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_Default));
+-                    ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_Screenshot));
+-                    ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));
+                     ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_Arbitrary));
+                     ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_LastFrame));
+                     ASSERT_FATAL(tsl::hlp::viAddToLayerStack(&this->m_layer, ViLayerStack_Null));
+@@ -3238,6 +3247,18 @@ namespace tsl {
+          * @brief Clears the screen
+          *
+          */
++        /**
++         * @brief Rec Menu: メニューを閉じている間に、フックの絵だけを描く
++         */
++        void drawHidden() {
++            auto& renderer = gfx::Renderer::get();
++
++            renderer.startFrame();
++            renderer.clearScreen();
++            if (tsl::impl::hiddenDraw) tsl::impl::hiddenDraw(&renderer);
++            renderer.endFrame();
++        }
++
+         void clearScreen() {
+             auto& renderer = gfx::Renderer::get();
+ 
+@@ -3459,6 +3480,7 @@ namespace tsl {
+ 
+                     switch (idx) {
+                         case WaiterObject_HomeButton:
++                            if (tsl::impl::onHomeButton) tsl::impl::onHomeButton();
+                             eventClear(&homeButtonPressEvent);
+                             break;
+                         case WaiterObject_PowerButton:
+@@ -3547,6 +3569,26 @@ namespace tsl {
+ 
+         while (shData.running) {
+ 
++            // ---- Rec Menu: 隠れている間も、タイマーや通知があれば描き続ける ----
++            {
++                bool hiddenShown = false;
++                while (shData.running) {
++                    const bool visible = tsl::impl::hiddenVisible && tsl::impl::hiddenVisible();
++                    if (visible && (!hiddenShown || (tsl::impl::hiddenNeedsDraw && tsl::impl::hiddenNeedsDraw()))) {
++                        overlay->drawHidden();   // 画面の更新(約16ms)を待つ
++                        hiddenShown = true;
++                        if (R_SUCCEEDED(eventWait(&shData.comboEvent, 0))) break;
++                        continue;
++                    }
++                    if (!visible && hiddenShown) {
++                        overlay->clearScreen();
++                        hiddenShown = false;
++                    }
++                    if (R_SUCCEEDED(eventWait(&shData.comboEvent, 50'000'000ULL))) break;
++                }
++                if (hiddenShown) overlay->clearScreen();
++            }
++
+             eventWait(&shData.comboEvent, UINT64_MAX);
+             eventClear(&shData.comboEvent);
+             shData.overlayOpen = true;
+@@ -3590,6 +3632,7 @@ namespace tsl {
+         threadWaitForExit(&backgroundThread);
+         threadClose(&backgroundThread);
+ 
++        if (tsl::impl::onBeforeExitScreen) tsl::impl::onBeforeExitScreen();
+         overlay->exitScreen();
+         overlay->exitServices();
+ 

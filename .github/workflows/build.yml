@@ -25,19 +25,14 @@ jobs:
       - name: Get Tesla-Template
         run: git clone --recursive https://github.com/WerWolv/Tesla-Template.git tpl
 
-      - name: Patch libtesla (keep overlay out of game video)
+      - name: Patch libtesla
         run: |
-          # Teslaの画面がゲームの録画映像に写り込まないようにする
-          T=tpl/libs/libtesla/include/tesla.hpp
-          sed -i '/viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));/d' $T
-          # HOMEボタンと終了処理のフックを追加する
-          sed -i '/^#define ELEMENT_BOUNDS/a namespace tsl::impl { inline void (*onHomeButton)() = nullptr; inline void (*onBeforeExitScreen)() = nullptr; inline ViDisplay *sharedDisplay = nullptr; }' $T
-          # Teslaが開いた画面(ディスプレイ)を通知の表示でも使えるようにする(2回は開けないため)
-          sed -i 's/^\( *\)ASSERT_FATAL(viOpenDefaultDisplay(&this->m_display));/&\n\1tsl::impl::sharedDisplay = \&this->m_display;/' $T
-          sed -i '/case WaiterObject_HomeButton:/a\                            if (tsl::impl::onHomeButton) tsl::impl::onHomeButton();' $T
-          sed -i 's/^\( *\)overlay->exitScreen();/\1if (tsl::impl::onBeforeExitScreen) tsl::impl::onBeforeExitScreen();\n\1overlay->exitScreen();/' $T
-          grep -n 'onHomeButton\|onBeforeExitScreen\|ViLayerStack_Recording' $T
-          grep -q 'tsl::impl::onHomeButton();' $T && grep -q 'tsl::impl::onBeforeExitScreen();' $T && grep -q 'tsl::impl::sharedDisplay = &this->m_display;' $T
+          # patches/libtesla.patch の内容:
+          #  - Teslaの画面を録画とスクリーンショットに写さない
+          #  - HOMEボタン・終了前のフック
+          #  - メニューを閉じている間もタイマーや通知を描けるようにする
+          cd tpl/libs/libtesla
+          git apply --verbose ../../../src/patches/libtesla.patch
 
       - name: Replace sources
         run: |

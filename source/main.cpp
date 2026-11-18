@@ -5,20 +5,19 @@
 
 // ---------------------------------------------------------------------------
 // メニュー
-//   録画中のタイマー(右上)と通知(右下)は osd.hpp が別レイヤーに描くので、
-//   メニューを閉じたままでも表示され、ゲームは普通に操作できる。
+//   録画中のタイマー(右上)と通知(右下)は、メニューを閉じている間に osd.hpp が
+//   Tesla の画面に描く(入力はゲームに渡したまま)。
 // ---------------------------------------------------------------------------
 class RecGui : public tsl::Gui {
 private:
     tsl::elm::ListItem *m_recItem = nullptr;
     tsl::elm::ListItem *m_shotItem = nullptr;
-    tsl::elm::ListItem *m_osdItem = nullptr;
 
 public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.3");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.8.0");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Recording  (saved to /switch/rec-menu)", "録画（保存先: /switch/rec-menu）")));
@@ -44,10 +43,6 @@ public:
         });
         list->addItem(timerToggle);
 
-        // タイマー/通知の表示が使えるか(うまく出ないときの確認用)
-        m_osdItem = new tsl::elm::ListItem(TR("Notification display", "通知の表示"));
-        m_osdItem->setValue(osd::g_status);
-        list->addItem(m_osdItem);
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Capture", "撮影")));
 
@@ -95,11 +90,11 @@ public:
         rec::shutdown();  // オーバーレイ終了時は録画を止めてファイルを閉じる
     }
 
-    void onShow() override {}
+    void onShow() override { osd::onMenuShow(); }   // 右に寄せていた画面を元に戻す
     void onHide() override {}
 
     std::unique_ptr<tsl::Gui> loadInitialGui() override {
-        // Teslaの画面の準備ができたので、タイマー/通知の表示と監視スレッドを始める
+        // タイマー/通知の表示(メニューを閉じている間にTeslaの画面に描く)と監視スレッドを始める
         osd::init();
         rec::startMonitor();
         return initially<RecGui>();
@@ -107,7 +102,7 @@ public:
 };
 
 static void onBeforeExitScreen() {
-    // Teslaが画面を片付ける前に、監視スレッドと自分のレイヤーを片付ける
+    // Teslaが画面を片付ける前に、監視スレッドを止める
     rec::stopMonitor();
     if (rec::isRecording()) rec::stop(rec::StopReason::Exit);
     osd::exit();

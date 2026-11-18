@@ -530,7 +530,7 @@ inline std::string elapsedText() {
 //   - スリープ/電源オフの直前 → 録画を止める(psc:m の通知)
 //   - HOMEボタン → 録画を止める(libtesla に入れた通知フック)
 //   - ゲームの映像が1.5秒以上来ない → 録画を止める(ゲーム終了など)
-//   - スクリーンショットの撮影、右上タイマーと右下通知の描画
+//   - スクリーンショットの撮影、右上タイマーの更新(描くのはメインスレッド)
 // ---------------------------------------------------------------------------
 constexpr u32 kPscModuleId = 0x524D;   // 他と重ならない適当な番号
 static PscPmModule g_psc;
@@ -539,7 +539,6 @@ static Thread g_monThread;
 static bool g_monValid = false;
 static std::atomic<bool> g_monRun{false};
 static std::atomic<bool> g_homePressed{false};
-static bool g_animating = false;   // 通知が動いている(監視スレッドだけが使う)
 
 // libtesla のバックグラウンドスレッドから呼ばれる(重い処理はしない)
 inline void onHomeButton() { g_homePressed = true; }
@@ -547,8 +546,8 @@ inline void onHomeButton() { g_homePressed = true; }
 inline void monitorThreadMain(void *) {
     State &s = state();
     while (g_monRun) {
-        // スリープの通知を待つ(通知が動いている間は約16ms、それ以外は0.1秒)
-        const u64 waitNs = g_animating ? 16'000'000ULL : 100'000'000ULL;
+        // スリープの通知を待つ(最大0.1秒)
+        const u64 waitNs = 100'000'000ULL;
         if (g_pscOk && R_SUCCEEDED(eventWait(&g_psc.event, waitNs))) {
             PscPmState st;
             u32 flags;
@@ -582,7 +581,6 @@ inline void monitorThreadMain(void *) {
         } else {
             osd::setTimer(false, "");
         }
-        g_animating = osd::tick();
     }
 }
 
