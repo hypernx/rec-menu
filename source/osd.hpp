@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <atomic>
 #include <cmath>
+#include <algorithm>
 
 extern "C" u64 __nx_vi_layer_id;   // libnx の viCreateLayer が使うレイヤーID
 
@@ -263,9 +264,14 @@ inline void tick() {
         Canvas c{ px, stride / 2, g_toast.w, g_toast.h };
         for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 2);
         if (toastOn) {
-            const float fs = 22;
+            // 長い文は文字を小さくして収める
+            float fs = 22;
             int tw = textWidth(toastText, fs);
-            if (tw > c.w - 40) tw = c.w - 40;
+            if (tw > c.w - 40) {
+                fs = std::max(15.f, fs * float(c.w - 40) / float(tw));
+                tw = textWidth(toastText, fs);
+                if (tw > c.w - 40) tw = c.w - 40;
+            }
             fill(c, 0, 4, tw + 40, c.h - 8, 0xD8181818, 12);
             fill(c, 0, 4, 6, c.h - 8, toastColor, 0);
             text(c, 22, c.h / 2 + 8, toastText, fs, kWhite);

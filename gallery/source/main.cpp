@@ -11,6 +11,7 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <SDL_image.h>
+#include "lang.hpp"
 #include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -187,7 +188,7 @@ static Input readInput() {
 // ---------------------------------------------------------------------------
 enum Tab { TabVideo = 0, TabPhoto = 1 };
 enum SortMode { SortNewest = 0, SortOldest, SortLargest, SortSmallest, SortCount };
-static const char *kSortNames[SortCount] = { "新しい順", "古い順", "大きい順", "小さい順" };
+static const char *kSortNames[SortCount] = { TR("Newest", "新しい順"), TR("Oldest", "古い順"), TR("Largest", "大きい順"), TR("Smallest", "小さい順") };
 
 struct Entry {
     std::string path, name;
@@ -244,7 +245,7 @@ static void scanDir(Tab tab) {
 }
 
 static std::string fmtDate(time_t t) {
-    if (t <= 0) return "日付不明";
+    if (t <= 0) return TR("Unknown date", "日付不明");
     struct tm tmv;
     localtime_r(&t, &tmv);
     char buf[32];
@@ -367,7 +368,7 @@ constexpr int kBackW = 150, kBackH = 64;
 
 static void drawBackButton() {
     fillRect(12, 10, kBackW - 24, kBackH - 20, 255, 255, 255, 40);
-    drawText(g_fontS, "＜ 戻る", kBackW / 2, 20, kWhite, Center);
+    drawText(g_fontS, TR("< Back", "＜ 戻る"), kBackW / 2, 20, kWhite, Center);
 }
 
 static double clockPos(const Player &p) {
@@ -399,18 +400,18 @@ static void closePlayer(Player &p) {
 }
 
 static bool openPlayer(Player &p, const std::string &path, std::string &err) {
-    if (avformat_open_input(&p.fmt, avPath(path).c_str(), nullptr, nullptr) < 0) { err = "ファイルを開けません"; return false; }
-    if (avformat_find_stream_info(p.fmt, nullptr) < 0) { err = "動画の情報を読めません"; return false; }
+    if (avformat_open_input(&p.fmt, avPath(path).c_str(), nullptr, nullptr) < 0) { err = TR("can't open the file", "ファイルを開けません"); return false; }
+    if (avformat_find_stream_info(p.fmt, nullptr) < 0) { err = TR("can't read the video", "動画の情報を読めません"); return false; }
     p.duration = p.fmt->duration > 0 ? p.fmt->duration / double(AV_TIME_BASE) : 0;
 
     const AVCodec *vc = nullptr, *ac = nullptr;
     p.vi = av_find_best_stream(p.fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &vc, 0);
-    if (p.vi < 0 || !vc) { err = "映像がありません"; return false; }
+    if (p.vi < 0 || !vc) { err = TR("no video track", "映像がありません"); return false; }
     p.vdec = avcodec_alloc_context3(vc);
     avcodec_parameters_to_context(p.vdec, p.fmt->streams[p.vi]->codecpar);
     p.vdec->thread_count = 3;                                // 3コアで並列デコード
     p.vdec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
-    if (avcodec_open2(p.vdec, vc, nullptr) < 0) { err = "映像をデコードできません"; return false; }
+    if (avcodec_open2(p.vdec, vc, nullptr) < 0) { err = TR("can't decode the video", "映像をデコードできません"); return false; }
 
     p.ai = av_find_best_stream(p.fmt, AVMEDIA_TYPE_AUDIO, -1, p.vi, &ac, 0);
     if (p.ai >= 0 && ac) {
@@ -575,9 +576,9 @@ static void drawPlayerOsd(const Player &p, const std::string &title) {
         fillRect(kBarX + fw - r, kBarY + kBarH / 2 - r, r * 2, r * 2, 0, 220, 200);
     }
     drawText(g_fontS, fmtTime(pos) + " / " + fmtTime(p.duration), kBarX, kBarY + 22, kWhite);
-    drawText(g_fontS, std::string(p.paused ? "A/タップ: 再生" : "A/タップ: 一時停止") + "    ←→: 10秒   L/R: 30秒   バーをなぞる: 移動",
+    drawText(g_fontS, std::string(p.paused ? TR("A/Tap: Play", "A/タップ: 再生") : TR("A/Tap: Pause", "A/タップ: 一時停止")) + TR("    ←→: 10s   L/R: 30s   Drag bar: Seek", "    ←→: 10秒   L/R: 30秒   バーをなぞる: 移動"),
              W - 40, kBarY + 22, kGray, Right);
-    if (p.paused && !p.scrubbing) drawText(g_fontL, "一時停止中", W / 2, H / 2 - 24, kWhite, Center);
+    if (p.paused && !p.scrubbing) drawText(g_fontL, TR("Paused", "一時停止中"), W / 2, H / 2 - 24, kWhite, Center);
 }
 
 static void playVideo(const Entry &e) {
@@ -590,7 +591,7 @@ static void playVideo(const Entry &e) {
         while (appletMainLoop() && nowMs() < until) {
             SDL_SetRenderDrawColor(g_ren, 0, 0, 0, 255);
             SDL_RenderClear(g_ren);
-            drawText(g_fontM, "再生できません: " + err, W / 2, H / 2 - 16, kRed, Center);
+            drawText(g_fontM, std::string(TR("Can't play: ", "再生できません: ")) + err, W / 2, H / 2 - 16, kRed, Center);
             SDL_RenderPresent(g_ren);
         }
         return;
@@ -716,7 +717,7 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
             else osdUntil = shown ? 0 : nowMs() + 2500;
         }
         if ((in.down & HidNpadButton_X) || wantDelete) {
-            if (confirmDelete(sel, 0, "この写真を削除しますか？", true, tex)) {
+            if (confirmDelete(sel, 0, TR("Delete this photo?", "この写真を削除しますか？"), true, tex)) {
                 deleteEntry(sel, toast);
                 toastUntil = nowMs() + 2500;
                 loaded = -1;
@@ -736,7 +737,7 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
             r.x = (W - r.w) / 2; r.y = (H - r.h) / 2;
             SDL_RenderCopy(g_ren, tex, nullptr, &r);
         } else {
-            drawText(g_fontM, "読み込めません", W / 2, H / 2 - 16, kRed, Center);
+            drawText(g_fontM, TR("Can't load", "読み込めません"), W / 2, H / 2 - 16, kRed, Center);
         }
         if (nowMs() < osdUntil) {
             const Entry &e = list[sel];
@@ -750,9 +751,9 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
             char info[96];
             snprintf(info, sizeof(info), "%s    %.1f MB", fmtDate(e.mtime).c_str(), e.size / 1048576.0);
             drawText(g_fontS, info, 30, H - 42, kGray);
-            drawText(g_fontS, "←→/スワイプ: 前/次    B: 戻る", W - 200, H - 42, kGray, Right);
+            drawText(g_fontS, TR("←→/Swipe: Prev/Next    B: Back", "←→/スワイプ: 前/次    B: 戻る"), W - 200, H - 42, kGray, Right);
             fillRect(W - 160, H - 50, 140, 44, 200, 60, 60, 200);
-            drawText(g_fontS, "X: 削除", W - 90, H - 42, kWhite, Center);
+            drawText(g_fontS, TR("X: Delete", "X: 削除"), W - 90, H - 42, kWhite, Center);
         }
         SDL_RenderPresent(g_ren);
         trimTextCache();
@@ -799,8 +800,8 @@ static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPho
         drawText(g_fontS, e.name, W / 2, by + 92, kGray, Center);
         fillRect(W / 2 - 270, by + 146, 260, 60, 120, 40, 40);
         fillRect(W / 2 + 10, by + 146, 260, 60, 70, 70, 76);
-        drawText(g_fontM, "A: 削除する", W / 2 - 140, by + 160, kWhite, Center);
-        drawText(g_fontM, "B: やめる", W / 2 + 140, by + 160, kWhite, Center);
+        drawText(g_fontM, TR("A: Delete", "A: 削除する"), W / 2 - 140, by + 160, kWhite, Center);
+        drawText(g_fontM, TR("B: Cancel", "B: やめる"), W / 2 + 140, by + 160, kWhite, Center);
         SDL_RenderPresent(g_ren);
     }
     return false;
@@ -810,13 +811,13 @@ static bool deleteEntry(int &sel, std::string &toast) {
     std::vector<Entry> &list = cur();
     const std::string name = list[sel].name;
     if (remove(list[sel].path.c_str()) != 0) {
-        toast = "削除できませんでした";
+        toast = TR("Couldn't delete", "削除できませんでした");
         return false;
     }
     if (list[sel].thumb) SDL_DestroyTexture(list[sel].thumb);
     list.erase(list.begin() + sel);
     if (sel >= int(list.size())) sel = std::max(0, int(list.size()) - 1);
-    toast = name + " を削除しました";
+    toast = name + TR(" deleted", " を削除しました");
     return true;
 }
 
@@ -829,11 +830,11 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
     fillRect(0, 0, W, 104, 36, 36, 42);
     drawText(g_fontL, "Rec Gallery", 36, 10, kWhite);
     char sortLabel[64];
-    snprintf(sortLabel, sizeof(sortLabel), "並び順: %s  (−で変更)", kSortNames[g_sort]);
+    snprintf(sortLabel, sizeof(sortLabel), TR("Sort: %s  (− to change)", "並び順: %s  (−で変更)"), kSortNames[g_sort]);
     drawText(g_fontS, sortLabel, W - 36, 20, kGray, Right);
 
     // タブ
-    const char *tabNames[2] = { "動画", "写真" };
+    const char *tabNames[2] = { TR("Videos", "動画"), TR("Photos", "写真") };
     for (int t = 0; t < 2; t++) {
         char label[32];
         snprintf(label, sizeof(label), "%s (%d)", tabNames[t], int(g_lists[t].size()));
@@ -841,11 +842,11 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
         drawText(g_fontM, label, tx + 80, 62, t == g_tab ? kWhite : kGray, Center);
         if (t == g_tab) fillRect(tx + 10, 98, 140, 4, 0, 220, 200);
     }
-    drawText(g_fontS, "L/R: 切り替え", 36 + 2 * 180 + 10, 68, kGray);
+    drawText(g_fontS, TR("L/R: Switch", "L/R: 切り替え"), 36 + 2 * 180 + 10, 68, kGray);
 
     if (list.empty()) {
-        drawText(g_fontM, g_tab == TabVideo ? "動画がありません" : "写真がありません", W / 2, H / 2 - 30, kWhite, Center);
-        drawText(g_fontS, "Rec Menu で撮ると /switch/rec-menu/ に保存され、ここに出てきます", W / 2, H / 2 + 20,
+        drawText(g_fontM, g_tab == TabVideo ? TR("No videos", "動画がありません") : TR("No photos", "写真がありません"), W / 2, H / 2 - 30, kWhite, Center);
+        drawText(g_fontS, TR("Recordings and screenshots from Rec Menu are saved to /switch/rec-menu/ and show up here", "Rec Menu で撮ると /switch/rec-menu/ に保存され、ここに出てきます"), W / 2, H / 2 + 20,
                  kGray, Center);
     }
 
@@ -859,7 +860,7 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
             SDL_RenderCopy(g_ren, e.thumb, nullptr, &r);
         } else {
             fillRect(x, y, kThumbW, kThumbH, 50, 50, 56);
-            drawText(g_fontS, e.thumbTried ? "読み込めません" : "読み込み中…", x + kThumbW / 2, y + kThumbH / 2 - 12,
+            drawText(g_fontS, e.thumbTried ? TR("Can't load", "読み込めません") : TR("Loading…", "読み込み中…"), x + kThumbW / 2, y + kThumbH / 2 - 12,
                      kGray, Center);
         }
         if (g_tab == TabVideo && e.duration >= 0) {
@@ -877,10 +878,10 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
         const Entry &e = list[sel];
         char info[160];
         snprintf(info, sizeof(info), "%s   %.1f MB%s", e.name.c_str(), e.size / 1048576.0,
-                 g_tab != TabVideo || !e.thumbTried ? "" : (e.hasAudio ? "   音声あり" : "   音声なし"));
+                 g_tab != TabVideo || !e.thumbTried ? "" : (e.hasAudio ? TR("   Audio", "   音声あり") : TR("   No audio", "   音声なし")));
         drawText(g_fontS, info, 36, H - 38, kGray);
     }
-    drawText(g_fontS, g_tab == TabVideo ? "A: 再生   X: 削除   Y: 更新   +: 終了" : "A: 表示   X: 削除   Y: 更新   +: 終了",
+    drawText(g_fontS, g_tab == TabVideo ? TR("A: Play   X: Delete   Y: Reload   +: Exit", "A: 再生   X: 削除   Y: 更新   +: 終了") : TR("A: View   X: Delete   Y: Reload   +: Exit", "A: 表示   X: 削除   Y: 更新   +: 終了"),
              W - 36, H - 38, kWhite, Right);
 
     if (!toast.empty() && nowMs() < toastUntil) {
@@ -916,7 +917,7 @@ static void galleryLoop() {
             sortList(g_lists[1]);
             sel[0] = sel[1] = 0;
             scrollRow[0] = scrollRow[1] = 0;
-            toast = std::string("並び順: ") + kSortNames[g_sort];
+            toast = std::string(TR("Sort: ", "並び順: ")) + kSortNames[g_sort];
             toastUntil = nowMs() + 1500;
             continue;
         }
@@ -942,7 +943,7 @@ static void galleryLoop() {
                 sortList(g_lists[1]);
                 sel[0] = sel[1] = 0;
                 scrollRow[0] = scrollRow[1] = 0;
-                toast = std::string("並び順: ") + kSortNames[g_sort];
+                toast = std::string(TR("Sort: ", "並び順: ")) + kSortNames[g_sort];
                 toastUntil = nowMs() + 1500;
                 continue;
             }
@@ -981,7 +982,7 @@ static void galleryLoop() {
                 else viewPhotos(s, toast, toastUntil);
                 padUpdate(&g_pad);   // 再生画面で押したボタンを持ち越さない
             } else if (in.down & HidNpadButton_X) {
-                if (confirmDelete(s, sr, g_tab == TabVideo ? "この動画を削除しますか？" : "この写真を削除しますか？", false, nullptr)) {
+                if (confirmDelete(s, sr, g_tab == TabVideo ? TR("Delete this video?", "この動画を削除しますか？") : TR("Delete this photo?", "この写真を削除しますか？"), false, nullptr)) {
                     deleteEntry(s, toast);
                     toastUntil = nowMs() + 2500;
                 }

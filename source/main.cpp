@@ -1,6 +1,7 @@
 #define TESLA_INIT_IMPL
 #include <tesla.hpp>
 #include "recorder.hpp"
+#include "lang.hpp"
 
 // ---------------------------------------------------------------------------
 // メニュー
@@ -18,12 +19,12 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.6.1");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.0");
         auto list = new tsl::elm::List();
 
-        list->addItem(new tsl::elm::CategoryHeader("Recording  (save: /switch/rec-menu)"));
+        list->addItem(new tsl::elm::CategoryHeader(TR("Recording  (saved to /switch/rec-menu)", "録画（保存先: /switch/rec-menu）")));
 
-        m_recItem = new tsl::elm::ListItem("Record");
+        m_recItem = new tsl::elm::ListItem(TR("Record", "録画"));
         m_recItem->setValue(rec::recStatus());
         m_recItem->setClickListener([this](u64 keys) {
             if (!(keys & HidNpadButton_A)) return false;
@@ -36,26 +37,26 @@ public:
         });
         list->addItem(m_recItem);
 
-        m_timeItem = new tsl::elm::ListItem("Elapsed");
+        m_timeItem = new tsl::elm::ListItem(TR("Elapsed", "経過時間"));
         m_timeItem->setValue("--:--");
         list->addItem(m_timeItem);
 
-        list->addItem(new tsl::elm::CategoryHeader("Settings"));
+        list->addItem(new tsl::elm::CategoryHeader(TR("Settings", "設定")));
 
-        auto timerToggle = new tsl::elm::ToggleListItem("Show timer (top right)", rec::state().showTimer);
+        auto timerToggle = new tsl::elm::ToggleListItem(TR("Show timer (top right)", "右上にタイマーを表示"), rec::state().showTimer);
         timerToggle->setStateChangedListener([](bool on) {
             rec::state().showTimer = on;
         });
         list->addItem(timerToggle);
 
         // タイマー/通知の表示が使えるか(うまく出ないときの確認用)
-        m_osdItem = new tsl::elm::ListItem("Notification display");
+        m_osdItem = new tsl::elm::ListItem(TR("Notification display", "通知の表示"));
         m_osdItem->setValue(osd::g_status);
         list->addItem(m_osdItem);
 
-        list->addItem(new tsl::elm::CategoryHeader("Capture"));
+        list->addItem(new tsl::elm::CategoryHeader(TR("Capture", "撮影")));
 
-        m_shotItem = new tsl::elm::ListItem("Screenshot");
+        m_shotItem = new tsl::elm::ListItem(TR("Screenshot", "スクリーンショット"));
         m_shotItem->setValue(rec::shotStatus());
         m_shotItem->setClickListener([](u64 keys) {
             if (!(keys & HidNpadButton_A)) return false;
@@ -72,7 +73,7 @@ public:
 
     void update() override {
         if (m_recItem)
-            m_recItem->setValue(rec::isRecording() ? "REC (A: stop)" : rec::recStatus());
+            m_recItem->setValue(rec::isRecording() ? TR("REC (A: stop)", "録画中（Aで停止）") : rec::recStatus());
         if (m_timeItem)
             m_timeItem->setValue(rec::isRecording() ? rec::elapsedText() : "--:--");
         if (m_shotItem)

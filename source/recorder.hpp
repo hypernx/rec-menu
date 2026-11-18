@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include "mp4.hpp"
 #include "osd.hpp"
+#include "lang.hpp"
 
 // 録画・スクリーンショットのバックエンド。
 // - スクリーンショット: capssc(caps:sc)でJPEGを取得し、SDカードに保存する。
@@ -28,7 +29,7 @@ struct State {
     bool capsReady = false;      // capsscInitialize が成功したか
     u32 savedCount = 0;          // 今回の起動中に保存した枚数
     u32 nextIndex = 0;           // 次に試すファイル番号
-    std::string shotMsg = "Ready";
+    std::string shotMsg = TR("Ready", "待機中");
 
     // 録画
     bool vThreadValid = false;
@@ -46,7 +47,7 @@ struct State {
     std::atomic<u32> audioPackets{0};   // 受け取った音声パケット数(確認用)
     u32 nextRecIndex = 0;
     char recPath[64] = {};
-    std::string recMsg = "Ready";
+    std::string recMsg = TR("Ready", "待機中");
     u64 msgExpireMs = 0;        // この時刻を過ぎたら recMsg を消す(0なら消さない)
     std::atomic<bool> stoppedBySleep{false};
     std::atomic<u64> lastVideoMs{0};    // 最後に映像を受け取った時刻
@@ -236,10 +237,11 @@ inline void closeFile() {
     freeBuffers();
 }
 
-inline void startFail(const char *en, const char *jp) {
-    state().recMsg = en;
+// menu = メニューに出す短い文、note = 左下の通知
+inline void startFail(const char *menu, const char *note) {
+    state().recMsg = menu;
     state().msgExpireMs = 0;
-    osd::toast(jp, osd::kRed, 4000);
+    osd::toast(note, osd::kRed, 4000);
 }
 
 // 録画開始
@@ -251,7 +253,7 @@ inline bool startLocked() {
     // 前回のスレッドが終わっていなければ待つ(最大1秒)
     if (!joinThread(s.vThread, s.vThreadValid, 1'000'000'000ULL) ||
         !joinThread(s.aThread, s.aThreadValid, 1'000'000'000ULL)) {
-        startFail("Busy (stopping)", "前の録画を保存中です。少し待ってください");
+        startFail(TR("Busy (saving)", "保存中"), TR("Still saving the previous recording. Please wait a moment.", "前の録画を保存中です。少し待ってください"));
         return false;
     }
     closeFile();
@@ -259,18 +261,18 @@ inline bool startLocked() {
     // ゲームが起動していないと録画できない
     u64 appPid = 0;
     if (R_FAILED(pmdmntGetApplicationProcessId(&appPid)) || appPid == 0) {
-        startFail("No game running", "ゲームが起動していないため録画できません");
+        startFail(TR("No game running", "ゲームが起動していません"), TR("Can't record: no game is running", "ゲームが起動していないため録画できません"));
         return false;
     }
     // SysDVR と同時に使うと映像を取り合うので止める
     u64 dvrPid = 0;
     if (R_SUCCEEDED(pmdmntGetProcessId(&dvrPid, SYSDVR_PROGRAM_ID)) && dvrPid != 0) {
-        startFail("Disable SysDVR", "SysDVR が動いているため録画できません");
+        startFail(TR("Disable SysDVR", "SysDVRを止めてください"), TR("Can't record while SysDVR is running", "SysDVR が動いているため録画できません"));
         return false;
     }
 
     if (!allocBuffers()) {
-        startFail("Out of memory", "メモリが足りないため録画できません");
+        startFail(TR("Out of memory", "メモリ不足"), TR("Not enough memory to record", "メモリが足りないため録画できません"));
         return false;
     }
 
@@ -279,11 +281,11 @@ inline bool startLocked() {
         rc = grcdOpen(&g_grcdVideo);
         if (R_SUCCEEDED(rc)) rc = grcdOpen(&g_grcdAudio);
     });
-    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
+    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), TR("Couldn't start recording", "録画を開始できませんでした")); return false; }
 
     // 保存先(devoptabは使わず、FS APIで直接書く。スクリーンショット側と干渉しない)
     rc = fsOpenSdCardFileSystem(&s.sdfs);
-    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
+    if (R_FAILED(rc)) { startFail(errText(rc, buf, sizeof(buf)), TR("Couldn't start recording", "録画を開始できませんでした")); return false; }
     fsFsCreateDirectory(&s.sdfs, "/switch");
     fsFsCreateDirectory(&s.sdfs, "/switch/rec-menu");
 
@@ -297,12 +299,12 @@ inline bool startLocked() {
             break;
         }
     }
-    if (!found) { fsFsClose(&s.sdfs); startFail("No free name", "保存できるファイル名がありません"); return false; }
+    if (!found) { fsFsClose(&s.sdfs); startFail(TR("No free file name", "ファイル名がいっぱい"), TR("No free file name to save to", "保存できるファイル名がありません")); return false; }
 
     rc = fsFsCreateFile(&s.sdfs, s.recPath, 0, 0);
     if (R_SUCCEEDED(rc))
         rc = fsFsOpenFile(&s.sdfs, s.recPath, FsOpenMode_Write | FsOpenMode_Append, &s.file);
-    if (R_FAILED(rc)) { fsFsClose(&s.sdfs); startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした"); return false; }
+    if (R_FAILED(rc)) { fsFsClose(&s.sdfs); startFail(errText(rc, buf, sizeof(buf)), TR("Couldn't start recording", "録画を開始できませんでした")); return false; }
     s.fileOpen = true;
 
     s.fileOffset = 0;
@@ -318,7 +320,7 @@ inline bool startLocked() {
     if (!mp4::begin(fileWrite, g_video, g_vBuf, kVBufSize, g_audio, g_aBuf, kABufSize,
                     kSPS + 4, sizeof(kSPS) - 4, kPPS + 4, sizeof(kPPS) - 4, 1280, 720)) {
         closeFile();
-        startFail(errText(s.lastError, buf, sizeof(buf)), "録画を開始できませんでした");
+        startFail(errText(s.lastError, buf, sizeof(buf)), TR("Couldn't start recording", "録画を開始できませんでした"));
         return false;
     }
 
@@ -326,7 +328,7 @@ inline bool startLocked() {
     if (R_SUCCEEDED(rc)) rc = threadStart(&s.vThread);
     if (R_FAILED(rc)) {
         closeFile();
-        startFail(errText(rc, buf, sizeof(buf)), "録画を開始できませんでした");
+        startFail(errText(rc, buf, sizeof(buf)), TR("Couldn't start recording", "録画を開始できませんでした"));
         return false;
     }
     s.vThreadValid = true;
@@ -341,7 +343,7 @@ inline bool startLocked() {
     s.startTick = armGetSystemTick();
     s.stoppedBySleep = false;
     s.msgExpireMs = 0;
-    s.recMsg = "Recording";
+    s.recMsg = TR("Recording", "録画中");
     return true;
 }
 
@@ -369,42 +371,42 @@ inline void stopLocked(StopReason reason) {
     const u32 sec = u32(s.recordedUs.load() / 1000000ULL);
     if (s.lastError != 0) {
         s.recMsg = errText(s.lastError, buf, sizeof(buf));
-        snprintf(note, sizeof(note), "録画エラーで停止しました (%s)", s.recMsg.c_str());
+        snprintf(note, sizeof(note), TR("Recording stopped by an error (%s)", "録画エラーで停止しました (%s)"), s.recMsg.c_str());
         osd::toast(note, osd::kRed, 5000);
         return;
     }
     if (sec == 0 && s.bytesWritten.load() < 4096) {
-        s.recMsg = "No video data";
-        osd::toast("映像が届かなかったため録画できませんでした", osd::kRed, 5000);
+        s.recMsg = TR("No video data", "映像なし");
+        osd::toast(TR("No video was received, so nothing was recorded", "映像が届かなかったため録画できませんでした"), osd::kRed, 5000);
         return;
     }
     char snd[24];
     if (s.audioError) snprintf(snd, sizeof(snd), " snd:%04u-%04u", 2000 + R_MODULE(s.audioError.load()), R_DESCRIPTION(s.audioError.load()));
     else if (s.audioPackets == 0) snprintf(snd, sizeof(snd), " snd:0");
     else snd[0] = 0;
-    snprintf(buf, sizeof(buf), "Saved %u:%02u %.1fMB%s", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0, snd);
+    snprintf(buf, sizeof(buf), TR("Saved %u:%02u %.1fMB%s", "保存 %u:%02u %.1fMB%s"), sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0, snd);
     s.recMsg = buf;
     s.msgExpireMs = nowMs() + 3000;
 
     char len[32];
-    snprintf(len, sizeof(len), "%u:%02u・%.1fMB", sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0);
+    snprintf(len, sizeof(len), TR("%u:%02u, %.1fMB", "%u:%02u・%.1fMB"), sec / 60, sec % 60, s.bytesWritten.load() / 1048576.0);
     switch (reason) {
         case StopReason::Home:
-            snprintf(note, sizeof(note), "ホーム画面に移動したため録画を停止しました (%s)", len);
+            snprintf(note, sizeof(note), TR("Went to the HOME Menu, so recording stopped (%s)", "ホーム画面に移動したため録画を停止しました (%s)"), len);
             osd::toast(note, osd::kOrange, 5000);
             break;
         case StopReason::Sleep:
-            snprintf(note, sizeof(note), "スリープしたため録画を停止しました (%s)", len);
+            snprintf(note, sizeof(note), TR("Console went to sleep, so recording stopped (%s)", "スリープしたため録画を停止しました (%s)"), len);
             osd::toast(note, osd::kOrange, 5000);
             break;
         case StopReason::GameStopped:
-            snprintf(note, sizeof(note), "ゲームの映像が止まったため録画を停止しました (%s)", len);
+            snprintf(note, sizeof(note), TR("Game video stopped, so recording stopped (%s)", "ゲームの映像が止まったため録画を停止しました (%s)"), len);
             osd::toast(note, osd::kOrange, 5000);
             break;
         case StopReason::Exit:
             break;
         default:
-            snprintf(note, sizeof(note), "録画を停止しました (%s)", len);
+            snprintf(note, sizeof(note), TR("Recording stopped (%s)", "録画を停止しました (%s)"), len);
             osd::toast(note, osd::kGreen, 3000);
             break;
     }
@@ -416,7 +418,7 @@ inline bool start() {
     mutexLock(&g_ctrlLock);
     bool ok = startLocked();
     mutexUnlock(&g_ctrlLock);
-    if (ok) osd::toast("録画を開始しました", osd::kRed, 2500);
+    if (ok) osd::toast(TR("Recording started", "録画を開始しました"), osd::kRed, 2500);
     return ok;
 }
 
@@ -452,14 +454,14 @@ inline void doScreenshot() {
     char msg[64];
     if (!s.capsReady) {
         s.shotMsg = "caps not ready";
-        osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
+        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::kRed, 4000);
         return;
     }
     // 512KBのバッファは撮るときだけ確保する
     u8 *jpegBuf = static_cast<u8 *>(aligned_alloc(0x1000, CAPSSC_JPEG_BUFFER_SIZE));
     if (!jpegBuf) {
-        s.shotMsg = "Out of memory";
-        osd::toast("メモリが足りないためスクリーンショットを撮れませんでした", osd::kRed, 4000);
+        s.shotMsg = TR("Out of memory", "メモリ不足");
+        osd::toast(TR("Not enough memory to take a screenshot", "メモリが足りないためスクリーンショットを撮れませんでした"), osd::kRed, 4000);
         return;
     }
     struct Free { u8 *p; ~Free() { free(p); } } freeJpeg{ jpegBuf };
@@ -467,7 +469,7 @@ inline void doScreenshot() {
     Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, CAPSSC_JPEG_BUFFER_SIZE, ViLayerStack_Screenshot, 1000000000LL);
     if (R_FAILED(rc) || jpegSize == 0 || jpegSize > CAPSSC_JPEG_BUFFER_SIZE) {
         s.shotMsg = R_FAILED(rc) ? errText(rc, msg, sizeof(msg)) : "Bad size";
-        osd::toast("スクリーンショットを撮れませんでした", osd::kRed, 4000);
+        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::kRed, 4000);
         return;
     }
 
@@ -475,7 +477,7 @@ inline void doScreenshot() {
     FsFileSystem fs;
     if (R_FAILED(rc = fsOpenSdCardFileSystem(&fs))) {
         s.shotMsg = errText(rc, msg, sizeof(msg));
-        osd::toast("SDカードに保存できませんでした", osd::kRed, 4000);
+        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::kRed, 4000);
         return;
     }
     fsFsCreateDirectory(&fs, "/switch");
@@ -499,13 +501,13 @@ inline void doScreenshot() {
 
     if (R_FAILED(rc)) {
         s.shotMsg = errText(rc, msg, sizeof(msg));
-        osd::toast("SDカードに保存できませんでした", osd::kRed, 4000);
+        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::kRed, 4000);
         return;
     }
     s.savedCount++;
-    snprintf(msg, sizeof(msg), "Saved %u", s.savedCount);
+    snprintf(msg, sizeof(msg), TR("Saved %u", "保存 %u枚"), s.savedCount);
     s.shotMsg = msg;
-    osd::toast("スクリーンショットを保存しました", osd::kGreen, 2500);
+    osd::toast(TR("Screenshot saved", "スクリーンショットを保存しました"), osd::kGreen, 2500);
 }
 
 inline const std::string &shotStatus() { return state().shotMsg; }
@@ -629,7 +631,7 @@ inline void shutdown() {
 // 「Saved …」は3秒たったら消して Ready に戻す
 inline const std::string &recStatus() {
     State &s = state();
-    static const std::string ready = "Ready";
+    static const std::string ready = TR("Ready", "待機中");
     if (s.msgExpireMs != 0 && nowMs() > s.msgExpireMs) {
         s.recMsg = ready;
         s.msgExpireMs = 0;

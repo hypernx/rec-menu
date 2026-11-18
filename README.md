@@ -48,7 +48,12 @@ Everything is saved to the SD card. No PC, Wi‑Fi or phone is needed.
 
 ### Installation
 
-Copy the files to these locations on the SD card. Keep the file extensions as they are.
+Download the latest version from the [**Releases**](../../releases/latest) page. Each app comes in an **English** and a **Japanese** version; only the on-screen text differs.
+
+- **`RecMenu-RecGallery-en.zip`** (English) or **`RecMenu-RecGallery-ja.zip`** (Japanese): both apps. Extract it to the root of your SD card.
+- `RecMenu-en.ovl` / `RecMenu-ja.ovl`, `RecGallery-en.nro` / `RecGallery-ja.nro`: each app on its own.
+
+The files go in these locations on the SD card. Keep the file extensions as they are.
 
 ```text
 SD card/
@@ -144,6 +149,7 @@ source/            Rec Menu (overlay)
   recorder.hpp       Recording (grc:d), screenshots, stopping on sleep/HOME, monitor thread
   mp4.hpp            Fragmented MP4 writer (H.264 + PCM)
   osd.hpp            Timer and notification display (separate layer from Tesla)
+  lang.hpp           English / Japanese text (built with -DLANG_JA for Japanese)
 gallery/           Rec Gallery (NRO)
   source/main.cpp    List, video playback, photo viewer, delete
   icon.jpg           App icon
@@ -204,7 +210,12 @@ Use at your own risk.
 
 ### 入れ方
 
-SDカードの次の場所にファイルを置いてください。拡張子は変えないでください。
+最新版は [**Releases**](../../releases/latest) のページからダウンロードできます。どちらのアプリも **英語版** と **日本語版** があり、違うのは画面に出る文字だけです。
+
+- **`RecMenu-RecGallery-ja.zip`**（日本語版）または **`RecMenu-RecGallery-en.zip`**（英語版）：2つのアプリのセットです。SDカードの一番上（ルート）に展開してください。
+- `RecMenu-ja.ovl` / `RecMenu-en.ovl`、`RecGallery-ja.nro` / `RecGallery-en.nro`：それぞれのアプリだけのファイルです。
+
+ファイルはSDカードの次の場所に置きます。拡張子は変えないでください。
 
 ```text
 SDカード/
@@ -238,10 +249,10 @@ Ultrahandを開くボタン（初期設定は **L＋十字キー下＋右ステ�
 
 | 項目 | 操作 |
 |---|---|
-| **Record** | **A** で録画を開始します。メニューが閉じてゲームに戻ります。止めるときは、もう一度メニューを開いて **A** を押します。 |
-| **Show timer (top right)** | 録画中のタイマーを表示するかどうかを切り替えます。 |
-| **Notification display** | タイマーと通知が使えるかを表示します（`OK` か、どこで失敗したか）。 |
-| **Screenshot** | **A** を押すとメニューが閉じて、スクショを保存します。 |
+| **録画**（英語版: Record） | **A** で録画を開始します。メニューが閉じてゲームに戻ります。止めるときは、もう一度メニューを開いて **A** を押します。 |
+| **右上にタイマーを表示**（Show timer） | 録画中のタイマーを表示するかどうかを切り替えます。 |
+| **通知の表示**（Notification display） | タイマーと通知が使えるかを表示します（`OK` か、どこで失敗したか）。 |
+| **スクリーンショット**（Screenshot） | **A** を押すとメニューが閉じて、スクショを保存します。 |
 
 録画中に **B** を押しても、メニューが隠れるだけで録画は止まりません。
 
@@ -287,7 +298,7 @@ Ultrahandを開くボタン（初期設定は **L＋十字キー下＋右ステ�
 - **音声は圧縮していないPCMです**（1分あたり約11MB）。パソコンのVLCやRec Galleryでは鳴りますが、スマホの動画プレーヤーによっては音が出ないことがあります。
 - **Rec Menuを終了すると録画も止まります。** メニューを隠すだけなら録画は続きます。ただし、Ultrahandのオーバーレイ一覧に戻ったり、別のオーバーレイを開いたりするとRec Menu自体が終了するので、録画もそこで止まります（そこまでの分は保存されます）。
 - **SysDVRとは同時に使えません。** 同じ映像を使うためです。SysDVRが動いているときは、録画を始めようとするとエラーが出ます。
-- **タイマーと通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **Notification display** が `OK` 以外になっているときは、タイマーと通知は出ません。録画はそのままできます。
+- **タイマーと通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **通知の表示** が `OK` 以外になっているときは、タイマーと通知は出ません。録画はそのままできます。
 - **Rec GalleryはCPUだけで動画を再生しています。** 状況によっては再生がカクつくことがあります。
 
 ---
@@ -300,6 +311,7 @@ source/            Rec Menu（オーバーレイ）
   recorder.hpp       録画（grc:d）、スクショ、スリープ・HOMEでの停止、監視スレッド
   mp4.hpp            MP4（fragmented MP4）の書き出し（H.264＋PCM）
   osd.hpp            タイマーと通知の表示（Teslaとは別のレイヤー）
+  lang.hpp           英語 / 日本語の文字（-DLANG_JA を付けてビルドすると日本語）
 gallery/           Rec Gallery（NRO）
   source/main.cpp    一覧、動画再生、写真表示、削除
   icon.jpg           アプリのアイコン

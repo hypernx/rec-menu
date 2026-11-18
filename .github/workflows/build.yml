@@ -3,6 +3,8 @@ name: build-ovl
 on:
   workflow_dispatch:
   push:
+    branches: ['**']
+    tags: ['v*']
 
 jobs:
   build:
@@ -40,21 +42,28 @@ jobs:
           rm -rf tpl/source/*
           cp src/source/*.cpp src/source/*.hpp tpl/source/
 
-      - name: Build
+      - name: Build (English / Japanese)
         run: |
           cd tpl
           VER=$(grep -oE '"v[0-9.]+"' ../src/source/main.cpp | head -1 | tr -d '"v')
           echo "version: $VER"
-          # Ultrahandの一覧に「Rec Menu」とバージョンが出るようにする
-          make APP_TITLE="Rec Menu" APP_AUTHOR="hypernx" APP_VERSION="$VER"
+          mkdir -p ../out
+          # 英語版 → 日本語版の順にビルドする(-DLANG_JA で日本語)
+          for L in en ja; do
+            make clean >/dev/null
+            if [ "$L" = ja ]; then DEF=-DLANG_JA; else DEF=; fi
+            # Ultrahandの一覧に「Rec Menu」とバージョンが出るようにする
+            make DEFINES="$DEF" APP_TITLE="Rec Menu" APP_AUTHOR="hypernx" APP_VERSION="$VER"
+            cp tpl.ovl ../out/RecMenu-$L.ovl
+            cp tpl.elf ../out/RecMenu-$L.elf
+          done
+          ls -l ../out
 
       - name: Upload ovl
         uses: actions/upload-artifact@v6
         with:
           name: ovl
-          path: |
-            tpl/*.ovl
-            tpl/*.elf
+          path: out/*
 
   gallery:
     runs-on: ubuntu-latest
@@ -66,13 +75,63 @@ jobs:
       - name: Install libraries
         run: dkp-pacman -S --needed --noconfirm switch-ffmpeg switch-sdl2 switch-sdl2_ttf switch-sdl2_image || true
 
-      - name: Build Rec Gallery (NRO)
-        run: make -C gallery -j4
+      - name: Build Rec Gallery (English / Japanese)
+        run: |
+          mkdir -p out
+          for L in en ja; do
+            make -C gallery clean >/dev/null
+            if [ "$L" = ja ]; then DEF=-DLANG_JA; else DEF=; fi
+            make -C gallery -j4 DEFINES="$DEF"
+            cp gallery/RecGallery.nro out/RecGallery-$L.nro
+            cp gallery/RecGallery.elf out/RecGallery-$L.elf
+          done
+          ls -l out
 
       - name: Upload nro
         uses: actions/upload-artifact@v6
         with:
           name: nro
-          path: |
-            gallery/RecGallery.nro
-            gallery/RecGallery.elf
+          path: out/*
+
+  # v から始まるタグ(例: v0.7.0)を push すると、リリースページを作ってファイルを載せる
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, gallery]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (release notes)
+        uses: actions/checkout@v6
+
+      - name: Download builds
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Make SD card packages
+        run: |
+          cd dist
+          for L in en ja; do
+            rm -rf sd && mkdir -p sd/switch/.overlays sd/switch/RecGallery
+            cp RecMenu-$L.ovl sd/switch/.overlays/RecMenu.ovl
+            cp RecGallery-$L.nro sd/switch/RecGallery/RecGallery.nro
+            (cd sd && zip -qr ../RecMenu-RecGallery-$L.zip switch)
+          done
+          zip -q debug-symbols.zip *.elf
+          rm -rf sd
+          ls -l
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Rec Menu & Rec Gallery $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md \
+            dist/RecMenu-RecGallery-en.zip dist/RecMenu-RecGallery-ja.zip \
+            dist/RecMenu-en.ovl dist/RecMenu-ja.ovl \
+            dist/RecGallery-en.nro dist/RecGallery-ja.nro \
+            dist/debug-symbols.zip
