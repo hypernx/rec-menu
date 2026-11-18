@@ -12,12 +12,12 @@ include $(DEVKITPRO)/libnx/switch_rules
 
 TARGET      := RecGallery
 BUILD       := build
-SOURCES     := source
+SOURCES     := source source/faac
 DATA        := data
-INCLUDES    := include
+INCLUDES    := include source/faac
 APP_TITLE   := Rec Gallery
 APP_AUTHOR  := hypernx
-APP_VERSION := 0.4.1
+APP_VERSION := 0.5.0
 
 PKGCONF := $(PORTLIBS)/bin/aarch64-none-elf-pkg-config
 PKGS    := SDL2_ttf SDL2_image sdl2 libavformat libavcodec libswscale libswresample libavutil
@@ -28,6 +28,8 @@ ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS   := -g -Wall -O2 -ffunction-sections $(ARCH) $(DEFINES)
 CFLAGS   += $(INCLUDE) -D__SWITCH__ $(shell $(PKGCONF) --cflags $(PKGS))
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++20
+# FAAC(AACエンコーダー)の C ファイルには設定ファイルを読ませる
+CFLAGS   += -include $(TOPDIR)/source/faac/config.h -Wno-unused-function -Wno-unused-variable
 ASFLAGS  := -g $(ARCH)
 LDFLAGS   = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 

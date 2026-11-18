@@ -1,4 +1,5 @@
 #define TESLA_INIT_IMPL
+#define REC_MENU_VERSION "v0.8.1"
 #include <tesla.hpp>
 #include "recorder.hpp"
 #include "lang.hpp"
@@ -17,7 +18,7 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.8.0");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", REC_MENU_VERSION);
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Recording  (saved to /switch/rec-menu)", "録画（保存先: /switch/rec-menu）")));

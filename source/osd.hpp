@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 
 extern "C" u64 __nx_vi_layer_id;   // Teslaのレイヤー(画面)のID
 
@@ -35,6 +36,10 @@ inline bool g_timerOn = false;
 inline bool g_dirty = true;         // 描き直しが必要
 inline bool g_layerRight = false;   // Teslaの画面を右端に寄せているか
 
+// ---- 確認用の記録(debug.txt に書き出す)----
+inline std::atomic<u32> g_cntVisibleCalls{0}, g_cntVisibleTrue{0}, g_cntNeedDraw{0}, g_cntDraw{0}, g_cntMenuShow{0};
+inline std::atomic<u32> g_lastPosRc{0};
+
 constexpr u64 kPopInMs = 320, kPopOutMs = 220;
 constexpr u64 kStaleMs = 4000;      // メニューを開いている間に来て、これより古くなった通知は出さない
 
@@ -44,7 +49,7 @@ inline void setLayerX(float x) {
     ViLayer layer{};
     layer.layer_id = __nx_vi_layer_id;
     layer.initialized = true;
-    viSetLayerPosition(&layer, x, 0);
+    g_lastPosRc = viSetLayerPosition(&layer, x, 0);
 }
 
 // ---- どのスレッドからでも呼べる ----
@@ -174,6 +179,8 @@ inline bool hiddenVisible() {
     mutexLock(&g_lock);
     const bool v = g_timerOn || toastActiveLocked(nowMs());
     mutexUnlock(&g_lock);
+    g_cntVisibleCalls++;
+    if (v) g_cntVisibleTrue++;
     return v;
 }
 
@@ -190,11 +197,13 @@ inline bool hiddenNeedsDraw() {
         need = true;   // 引っ込み終わった → 消す
     }
     mutexUnlock(&g_lock);
+    if (need) g_cntNeedDraw++;
     return need;
 }
 
 // フック: 描く(Teslaのフレームの中で呼ばれる。画面は透明に消してある)
 inline void hiddenDraw(tsl::gfx::Renderer *r) {
+    g_cntDraw++;
     if (!g_layerRight) {   // Teslaの画面を右端に寄せる(メニューを開くと元に戻す)
         setLayerX(float(tsl::cfg::ScreenWidth - tsl::cfg::LayerWidth));
         g_layerRight = true;
@@ -264,6 +273,7 @@ inline void hiddenDraw(tsl::gfx::Renderer *r) {
 
 // メニューを開くとき(onShow)に呼ぶ: Teslaの画面を元の位置(左端)に戻す
 inline void onMenuShow() {
+    g_cntMenuShow++;
     if (g_layerRight) {
         setLayerX(0);
         g_layerRight = false;
@@ -271,6 +281,24 @@ inline void onMenuShow() {
     mutexLock(&g_lock);
     g_dirty = true;
     mutexUnlock(&g_lock);
+}
+
+// 確認用: 今の状態を1行の文字にする
+inline void debugLine(char *buf, size_t n) {
+    mutexLock(&g_lock);
+    const bool timerOn = g_timerOn;
+    const u64 req = g_toastRequestMs, shown = g_toastShownMs;
+    mutexUnlock(&g_lock);
+    snprintf(buf, n,
+             "osd ready=%d hooks=%d timerOn=%d toastReq=%llu toastShown=%llu now=%llu\n"
+             "visibleCalls=%u visibleTrue=%u needDraw=%u draw=%u menuShow=%u layerRight=%d posRc=0x%X\n"
+             "layerId=%llu fb=%ux%u layer=%ux%u\n",
+             int(g_ready), int(tsl::impl::hiddenDraw != nullptr), int(timerOn), (unsigned long long)req,
+             (unsigned long long)shown, (unsigned long long)nowMs(),
+             g_cntVisibleCalls.load(), g_cntVisibleTrue.load(), g_cntNeedDraw.load(), g_cntDraw.load(),
+             g_cntMenuShow.load(), int(g_layerRight), g_lastPosRc.load(),
+             (unsigned long long)__nx_vi_layer_id, unsigned(tsl::cfg::FramebufferWidth), unsigned(tsl::cfg::FramebufferHeight),
+             unsigned(tsl::cfg::LayerWidth), unsigned(tsl::cfg::LayerHeight));
 }
 
 inline bool init() {

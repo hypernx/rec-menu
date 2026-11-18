@@ -8,6 +8,9 @@
 #include <cstdlib>
 #include "mp4.hpp"
 #include "osd.hpp"
+#ifndef REC_MENU_VERSION
+#define REC_MENU_VERSION "?"
+#endif
 #include "lang.hpp"
 
 // 録画・スクリーンショットのバックエンド。
@@ -543,8 +546,34 @@ static std::atomic<bool> g_homePressed{false};
 // libtesla のバックグラウンドスレッドから呼ばれる(重い処理はしない)
 inline void onHomeButton() { g_homePressed = true; }
 
+// 確認用: タイマーや通知が出ないときに原因を調べるための記録
+inline void writeDebug(u32 tick) {
+    State &s = state();
+    char buf[768];
+    char osdLine[512];
+    osd::debugLine(osdLine, sizeof(osdLine));
+    const int n = snprintf(buf, sizeof(buf),
+        "Rec Menu debug  ver=%s  tick=%u\n"
+        "recording=%d showTimer=%d videoStarted=%d lastVideoAgo=%llu audioPackets=%u\n%s",
+        REC_MENU_VERSION, tick, int(s.recording), int(s.showTimer), int(g_video.started.load()),
+        (unsigned long long)(s.recording ? nowMs() - s.lastVideoMs.load() : 0), s.audioPackets.load(), osdLine);
+    if (n <= 0) return;
+    FsFileSystem fs;
+    if (R_FAILED(fsOpenSdCardFileSystem(&fs))) return;
+    fsFsCreateDirectory(&fs, "/switch/rec-menu");
+    const char *path = "/switch/rec-menu/debug.txt";
+    fsFsDeleteFile(&fs, path);
+    FsFile f;
+    if (R_SUCCEEDED(fsFsCreateFile(&fs, path, n, 0)) && R_SUCCEEDED(fsFsOpenFile(&fs, path, FsOpenMode_Write, &f))) {
+        fsFileWrite(&f, 0, buf, size_t(n), FsWriteOption_Flush);
+        fsFileClose(&f);
+    }
+    fsFsClose(&fs);
+}
+
 inline void monitorThreadMain(void *) {
     State &s = state();
+    u32 debugTick = 0;
     while (g_monRun) {
         // スリープの通知を待つ(最大0.1秒)
         const u64 waitNs = 100'000'000ULL;
@@ -572,6 +601,9 @@ inline void monitorThreadMain(void *) {
             g_shotAtMs = 0;
             doScreenshot();
         }
+
+        // 確認用の記録: 2秒ごとに /switch/rec-menu/debug.txt を書き直す
+        if (++debugTick % 20 == 0) writeDebug(debugTick);
 
         if (s.recording && s.showTimer) {
             const u32 t = elapsedSec();

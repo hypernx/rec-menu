@@ -12,6 +12,7 @@
 #include <SDL_ttf.h>
 #include <SDL_image.h>
 #include "lang.hpp"
+#include "aacconv.hpp"
 #include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -911,12 +912,74 @@ static void drawList(int sel, int scrollY, const std::string &toast, u64 toastUn
     }
 }
 
+// ---------------------------------------------------------------------------
+// 音声を AAC に変換(スマホで音が出るように)
+// ---------------------------------------------------------------------------
+static void drawConvert(int index, int total, const std::string &name, double frac, const char *sub) {
+    SDL_SetRenderDrawColor(g_ren, 24, 24, 28, 255);
+    SDL_RenderClear(g_ren);
+    drawText(g_fontL, "Rec Gallery", 36, 10, kWhite);
+    drawText(g_fontM, TR("Converting audio so it plays on phones", "スマホで音が出るように変換しています"), W / 2, H / 2 - 120, kWhite, Center);
+    char cnt[64];
+    snprintf(cnt, sizeof(cnt), "%d / %d", index + 1, total);
+    drawText(g_fontS, std::string(cnt) + "   " + name, W / 2, H / 2 - 60, kGray, Center);
+    const int bw = 760, bx = (W - bw) / 2, by = H / 2;
+    fillRect(bx, by, bw, 14, 70, 70, 76);
+    fillRect(bx, by, int(bw * std::clamp(frac, 0.0, 1.0)), 14, 0, 220, 200);
+    char pct[16];
+    snprintf(pct, sizeof(pct), "%d%%", int(frac * 100));
+    drawText(g_fontS, pct, W / 2, by + 30, kWhite, Center);
+    if (sub) drawText(g_fontS, sub, W / 2, by + 80, kGray, Center);
+    drawText(g_fontS, TR("B: Do it later", "B: あとで変換する"), W - 36, H - 40, kWhite, Right);
+    SDL_RenderPresent(g_ren);
+}
+
+// 音声が PCM の動画を全部 AAC に変換する。B で中止すると、次に起動したときに続きから
+static void convertPending() {
+    std::vector<std::string> todo, names;
+    for (const auto &e : g_lists[TabVideo]) {
+        if (conv::hasPcmAudio(e.path)) { todo.push_back(e.path); names.push_back(e.name); }
+    }
+    if (todo.empty()) return;
+
+    appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
+    bool cancelled = false;
+    int failed = 0;
+    for (size_t i = 0; i < todo.size() && !cancelled && appletMainLoop(); i++) {
+        u64 lastDraw = 0;
+        std::string err;
+        drawConvert(int(i), int(todo.size()), names[i], 0, nullptr);
+        auto r = conv::toAac(todo[i], [&](double f) {
+            const u64 now = nowMs();
+            if (now - lastDraw > 100) {   // 画面の更新は0.1秒ごと
+                lastDraw = now;
+                Input in = readInput();
+                if (in.down & HidNpadButton_B) { cancelled = true; return false; }
+                drawConvert(int(i), int(todo.size()), names[i], f, nullptr);
+            }
+            return appletMainLoop();
+        }, err);
+        if (r == conv::Result::Failed) failed++;
+        if (r == conv::Result::Cancelled) cancelled = true;
+    }
+    appletSetCpuBoostMode(ApmCpuBoostMode_Normal);
+    if (failed > 0) {   // 失敗した動画は元のまま残る
+        char msg[96];
+        snprintf(msg, sizeof(msg), TR("%d video(s) couldn't be converted (left as they were)", "%d本の動画は変換できませんでした（元のまま残っています）"), failed);
+        const u64 until = nowMs() + 2500;
+        while (appletMainLoop() && nowMs() < until) drawConvert(int(todo.size()) - 1, int(todo.size()), "", 1.0, msg);
+    }
+    scanDir(TabVideo);   // 大きさが変わったので読み直す
+    padUpdate(&g_pad);
+}
+
 static void galleryLoop() {
     int sel[2] = { 0, 0 }, scrollY[2] = { 0, 0 };
     std::string toast;
     u64 toastUntil = 0;
     scanDir(TabVideo);
     scanDir(TabPhoto);
+    convertPending();
 
     while (appletMainLoop() && !g_quit) {
         g_frameNo++;
@@ -928,7 +991,7 @@ static void galleryLoop() {
         const int n = int(list.size());
 
         if (in.down & (HidNpadButton_Plus | HidNpadButton_B)) break;
-        if (in.down & HidNpadButton_Y) { scanDir(g_tab); s = 0; sy = 0; continue; }
+        if (in.down & HidNpadButton_Y) { scanDir(g_tab); if (g_tab == TabVideo) convertPending(); s = 0; sy = 0; continue; }
         if (in.down & (HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL | HidNpadButton_ZR)) {
             g_tab = g_tab == TabVideo ? TabPhoto : TabVideo;
             continue;
