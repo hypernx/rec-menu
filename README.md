@@ -60,15 +60,14 @@ SD card/
 └── switch/
     ├── .overlays/
     │   └── RecMenu-vX.Y.Z.ovl      ← Rec Menu (the file name can be anything)
-    ├── RecGallery/
-    │   └── RecGallery.nro          ← Rec Gallery
+    ├── RecGallery.nro              ← Rec Gallery
     └── rec-menu/                   ← created automatically; recordings and screenshots go here
         ├── rec_00000.mp4
         └── shot_00000.jpg
 ```
 
 1. Create `/switch/.overlays/` if it does not exist (the name starts with a dot), and copy the `.ovl` file into it.
-2. Create `/switch/RecGallery/` and copy `RecGallery.nro` into it.
+2. Copy `RecGallery.nro` into `/switch/`. (A subfolder such as `/switch/RecGallery/` also works; the Homebrew Menu finds `.nro` files in `/switch/` and one folder below it.)
 3. **When you update Rec Menu, delete the old `.ovl` first.** If old and new copies are both in `.overlays`, they show up side by side in the Ultrahand list and it is easy to open the old one. Check the version number shown in the Ultrahand list and in the top-right of the menu.
 
 #### Requirements
@@ -222,15 +221,14 @@ SDカード/
 └── switch/
     ├── .overlays/
     │   └── RecMenu-vX.Y.Z.ovl      ← Rec Menu（ファイル名は自由です）
-    ├── RecGallery/
-    │   └── RecGallery.nro          ← Rec Gallery
+    ├── RecGallery.nro              ← Rec Gallery
     └── rec-menu/                   ← 自動で作られます。動画とスクショはここに保存されます
         ├── rec_00000.mp4
         └── shot_00000.jpg
 ```
 
 1. `/switch/.overlays/` フォルダがなければ作ってください（名前の先頭にドットが付きます）。そこに `.ovl` ファイルを入れます。
-2. `/switch/RecGallery/` フォルダを作って、`RecGallery.nro` を入れます。
+2. `RecGallery.nro` を `/switch/` に入れます。（`/switch/RecGallery/` のようなフォルダに入れても大丈夫です。ホームブリューメニューは `/switch/` の中と、その1つ下のフォルダまで探します）
 3. **Rec Menuを新しい版にするときは、先に古い `.ovl` を消してください。** 古いファイルと新しいファイルが両方 `.overlays` にあると、Ultrahandの一覧に並んで表示され、古い方を開いてしまいやすくなります。Ultrahandの一覧とメニューの右上にバージョンが出るので、それで確認してください。
 
 #### 必要なもの

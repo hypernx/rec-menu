@@ -26,9 +26,10 @@ Each app comes in an **English** and a **Japanese** version. They work the same;
 1. Extract `RecMenu-RecGallery-en.zip` to the root of your SD card. It contains:
    ```text
    switch/.overlays/RecMenu.ovl
-   switch/RecGallery/RecGallery.nro
+   switch/RecGallery.nro
    ```
 2. **If you have an older Rec Menu**, delete its old `.ovl` from `switch/.overlays/` first. Otherwise both appear in the Ultrahand list and it's easy to open the old one.
+   Likewise, if you put an older Rec Gallery in another folder (for example `switch/RecGallery/`), delete it so only one shows up in the Homebrew Menu.
 3. Recordings and screenshots are saved to `switch/rec-menu/`.
 
 **Requirements:** a Switch running Atmosphère, and Ultrahand (or Tesla) for Rec Menu.
@@ -72,9 +73,10 @@ Switchのゲームを録画してMP4で保存し、本体で見られるソフ�
 1. `RecMenu-RecGallery-ja.zip` を、SDカードの一番上（ルート）に展開します。中身は次の2つです。
    ```text
    switch/.overlays/RecMenu.ovl
-   switch/RecGallery/RecGallery.nro
+   switch/RecGallery.nro
    ```
 2. **前の版のRec Menuが入っている場合は**、先に `switch/.overlays/` の古い `.ovl` を消してください。残っていると、Ultrahandの一覧に両方並んで、古い方を開いてしまいやすくなります。
+   Rec Galleryも、前の版を別の場所（`switch/RecGallery/` など）に入れていた場合は消してください。ホームブリューメニューに2つ並んでしまいます。
 3. 録画した動画とスクショは `switch/rec-menu/` に保存されます。
 
 **必要なもの：** Atmosphèreで動いているSwitch。Rec Menuを使うにはUltrahand（またはTesla）も必要です。
