@@ -19,7 +19,7 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.1");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.2");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Recording  (saved to /switch/rec-menu)", "録画（保存先: /switch/rec-menu）")));

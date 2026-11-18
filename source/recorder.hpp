@@ -241,7 +241,7 @@ inline void closeFile() {
 inline void startFail(const char *menu, const char *note) {
     state().recMsg = menu;
     state().msgExpireMs = 0;
-    osd::toast(note, osd::kRed, 4000);
+    osd::toast(note, osd::Icon::Error, 4000);
 }
 
 // 録画開始
@@ -372,12 +372,12 @@ inline void stopLocked(StopReason reason) {
     if (s.lastError != 0) {
         s.recMsg = errText(s.lastError, buf, sizeof(buf));
         snprintf(note, sizeof(note), TR("Recording stopped by an error (%s)", "録画エラーで停止しました (%s)"), s.recMsg.c_str());
-        osd::toast(note, osd::kRed, 5000);
+        osd::toast(note, osd::Icon::Error, 5000);
         return;
     }
     if (sec == 0 && s.bytesWritten.load() < 4096) {
         s.recMsg = TR("No video data", "映像なし");
-        osd::toast(TR("No video was received, so nothing was recorded", "映像が届かなかったため録画できませんでした"), osd::kRed, 5000);
+        osd::toast(TR("No video was received, so nothing was recorded", "映像が届かなかったため録画できませんでした"), osd::Icon::Error, 5000);
         return;
     }
     char snd[24];
@@ -393,21 +393,21 @@ inline void stopLocked(StopReason reason) {
     switch (reason) {
         case StopReason::Home:
             snprintf(note, sizeof(note), TR("Went to the HOME Menu, so recording stopped (%s)", "ホーム画面に移動したため録画を停止しました (%s)"), len);
-            osd::toast(note, osd::kOrange, 5000);
+            osd::toast(note, osd::Icon::Warn, 5000);
             break;
         case StopReason::Sleep:
             snprintf(note, sizeof(note), TR("Console went to sleep, so recording stopped (%s)", "スリープしたため録画を停止しました (%s)"), len);
-            osd::toast(note, osd::kOrange, 5000);
+            osd::toast(note, osd::Icon::Warn, 5000);
             break;
         case StopReason::GameStopped:
             snprintf(note, sizeof(note), TR("Game video stopped, so recording stopped (%s)", "ゲームの映像が止まったため録画を停止しました (%s)"), len);
-            osd::toast(note, osd::kOrange, 5000);
+            osd::toast(note, osd::Icon::Warn, 5000);
             break;
         case StopReason::Exit:
             break;
         default:
             snprintf(note, sizeof(note), TR("Recording stopped (%s)", "録画を停止しました (%s)"), len);
-            osd::toast(note, osd::kGreen, 3000);
+            osd::toast(note, osd::Icon::Stop, 3000);
             break;
     }
 }
@@ -418,7 +418,7 @@ inline bool start() {
     mutexLock(&g_ctrlLock);
     bool ok = startLocked();
     mutexUnlock(&g_ctrlLock);
-    if (ok) osd::toast(TR("Recording started", "録画を開始しました"), osd::kRed, 2500);
+    if (ok) osd::toast(TR("Recording started", "録画を開始しました"), osd::Icon::Rec, 2500);
     return ok;
 }
 
@@ -454,14 +454,14 @@ inline void doScreenshot() {
     char msg[64];
     if (!s.capsReady) {
         s.shotMsg = "caps not ready";
-        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::kRed, 4000);
+        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::Icon::Error, 4000);
         return;
     }
     // 512KBのバッファは撮るときだけ確保する
     u8 *jpegBuf = static_cast<u8 *>(aligned_alloc(0x1000, CAPSSC_JPEG_BUFFER_SIZE));
     if (!jpegBuf) {
         s.shotMsg = TR("Out of memory", "メモリ不足");
-        osd::toast(TR("Not enough memory to take a screenshot", "メモリが足りないためスクリーンショットを撮れませんでした"), osd::kRed, 4000);
+        osd::toast(TR("Not enough memory to take a screenshot", "メモリが足りないためスクリーンショットを撮れませんでした"), osd::Icon::Error, 4000);
         return;
     }
     struct Free { u8 *p; ~Free() { free(p); } } freeJpeg{ jpegBuf };
@@ -469,7 +469,7 @@ inline void doScreenshot() {
     Result rc = capsscCaptureJpegScreenShot(&jpegSize, jpegBuf, CAPSSC_JPEG_BUFFER_SIZE, ViLayerStack_Screenshot, 1000000000LL);
     if (R_FAILED(rc) || jpegSize == 0 || jpegSize > CAPSSC_JPEG_BUFFER_SIZE) {
         s.shotMsg = R_FAILED(rc) ? errText(rc, msg, sizeof(msg)) : "Bad size";
-        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::kRed, 4000);
+        osd::toast(TR("Couldn't take a screenshot", "スクリーンショットを撮れませんでした"), osd::Icon::Error, 4000);
         return;
     }
 
@@ -477,7 +477,7 @@ inline void doScreenshot() {
     FsFileSystem fs;
     if (R_FAILED(rc = fsOpenSdCardFileSystem(&fs))) {
         s.shotMsg = errText(rc, msg, sizeof(msg));
-        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::kRed, 4000);
+        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::Icon::Error, 4000);
         return;
     }
     fsFsCreateDirectory(&fs, "/switch");
@@ -501,13 +501,13 @@ inline void doScreenshot() {
 
     if (R_FAILED(rc)) {
         s.shotMsg = errText(rc, msg, sizeof(msg));
-        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::kRed, 4000);
+        osd::toast(TR("Couldn't save to the SD card", "SDカードに保存できませんでした"), osd::Icon::Error, 4000);
         return;
     }
     s.savedCount++;
     snprintf(msg, sizeof(msg), TR("Saved %u", "保存 %u枚"), s.savedCount);
     s.shotMsg = msg;
-    osd::toast(TR("Screenshot saved", "スクリーンショットを保存しました"), osd::kGreen, 2500);
+    osd::toast(TR("Screenshot saved", "スクリーンショットを保存しました"), osd::Icon::Shot, 2500);
 }
 
 inline const std::string &shotStatus() { return state().shotMsg; }
@@ -539,6 +539,7 @@ static Thread g_monThread;
 static bool g_monValid = false;
 static std::atomic<bool> g_monRun{false};
 static std::atomic<bool> g_homePressed{false};
+static bool g_animating = false;   // 通知が動いている(監視スレッドだけが使う)
 
 // libtesla のバックグラウンドスレッドから呼ばれる(重い処理はしない)
 inline void onHomeButton() { g_homePressed = true; }
@@ -546,8 +547,9 @@ inline void onHomeButton() { g_homePressed = true; }
 inline void monitorThreadMain(void *) {
     State &s = state();
     while (g_monRun) {
-        // スリープの通知を待つ(最大0.1秒)
-        if (g_pscOk && R_SUCCEEDED(eventWait(&g_psc.event, 100'000'000ULL))) {
+        // スリープの通知を待つ(通知が動いている間は約16ms、それ以外は0.1秒)
+        const u64 waitNs = g_animating ? 16'000'000ULL : 100'000'000ULL;
+        if (g_pscOk && R_SUCCEEDED(eventWait(&g_psc.event, waitNs))) {
             PscPmState st;
             u32 flags;
             if (R_SUCCEEDED(pscPmModuleGetRequest(&g_psc, &st, &flags))) {
@@ -556,7 +558,7 @@ inline void monitorThreadMain(void *) {
                 pscPmModuleAcknowledge(&g_psc, st);
             }
         } else if (!g_pscOk) {
-            svcSleepThread(100'000'000ULL);
+            svcSleepThread(waitNs);
         }
 
         if (g_homePressed.exchange(false) && s.recording) stop(StopReason::Home);
@@ -580,7 +582,7 @@ inline void monitorThreadMain(void *) {
         } else {
             osd::setTimer(false, "");
         }
-        osd::tick();
+        g_animating = osd::tick();
     }
 }
 

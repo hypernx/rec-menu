@@ -35,8 +35,9 @@ inline Mutex g_lock;
 
 // 通知の内容(どのスレッドからでも設定できる)
 inline char g_toastText[128] = {};
-inline u32 g_toastColor = 0xFFFFFFFF;
 inline u64 g_toastUntilMs = 0;
+inline u64 g_toastShownMs = 0;
+inline float g_toastY = -1;   // 今のレイヤーの位置(画面1080p基準)
 inline bool g_toastDirty = false;
 inline char g_timerText[32] = {};
 inline bool g_timerOn = false;
@@ -184,6 +185,61 @@ inline void text(Canvas &c, int x, int baseline, const char *s, float px, u32 co
     }
 }
 
+// ---- 通知の絵 ----
+// 色は 0xAABBGGRR。rgb() で普通の RGB から作れる
+constexpr u32 rgb(u32 r, u32 g, u32 b, u32 a = 255) { return (a << 24) | (b << 16) | (g << 8) | r; }
+constexpr u32 kWhite  = rgb(255, 255, 255);
+constexpr u32 kRed    = rgb(255, 72, 72);
+
+enum class Icon { Info, Rec, Stop, Warn, Error, Shot };
+
+inline u32 iconColor(Icon i) {
+    switch (i) {
+        case Icon::Rec:   return rgb(255, 72, 72);    // 赤
+        case Icon::Stop:  return rgb(64, 200, 120);   // 緑
+        case Icon::Warn:  return rgb(255, 170, 40);   // オレンジ
+        case Icon::Error: return rgb(235, 60, 90);    // 濃いピンク
+        case Icon::Shot:  return rgb(70, 160, 255);   // 青
+        default:          return rgb(140, 140, 160);
+    }
+}
+
+// 丸いバッジ(アイコン)と文字の、角の丸い吹き出し。左端に寄せて描く
+inline void drawToast(Canvas &c, const char *msg, Icon icon) {
+    const int h = 52, top = (c.h - h) / 2 - 2, r = h / 2;
+    float fs = 22;
+    const int textX = 64, padR = 24;
+    int tw = textWidth(msg, fs);
+    const int maxTw = c.w - textX - padR - 4;
+    if (tw > maxTw) {   // 長い文は文字を小さくして収める
+        fs = std::max(15.f, fs * float(maxTw) / float(tw));
+        tw = std::min(textWidth(msg, fs), maxTw);
+    }
+    const int w = textX + tw + padR;
+    fill(c, 2, top + 4, w, h, rgb(0, 0, 0, 90), r);             // 影
+    fill(c, 0, top, w, h, rgb(36, 38, 48, 242), r);              // 本体
+
+    // バッジ
+    const int bx = 30, by = top + h / 2;
+    circle(c, bx, by, 19, iconColor(icon));
+    switch (icon) {
+        case Icon::Rec:   circle(c, bx, by, 7, kWhite); break;
+        case Icon::Stop:  fill(c, bx - 6, by - 6, 12, 12, kWhite, 2); break;
+        case Icon::Warn:  fill(c, bx - 2, by - 10, 4, 13, kWhite, 1); circle(c, bx, by + 8, 2, kWhite); break;
+        case Icon::Error:
+            for (int k = -7; k <= 7; k++) { circle(c, bx + k, by + k, 2, kWhite); circle(c, bx + k, by - k, 2, kWhite); }
+            break;
+        case Icon::Shot:   // カメラ
+            fill(c, bx - 10, by - 6, 20, 14, kWhite, 3);
+            fill(c, bx - 4, by - 9, 8, 4, kWhite, 1);
+            circle(c, bx, by + 1, 5, iconColor(icon));
+            circle(c, bx, by + 1, 2, kWhite);
+            break;
+        default: circle(c, bx, by, 4, kWhite); break;
+    }
+    text(c, textX, by + int(fs * 0.36f), msg, fs, kWhite);
+}
+
 // ---- 初期化(Teslaの画面の準備ができた後、メインスレッドから1回呼ぶ) ----
 inline void setStatus(const char *step, Result rc) {
     snprintf(g_status, sizeof(g_status), "%s err %04u-%04u", step, 2000 + R_MODULE(rc), R_DESCRIPTION(rc));
@@ -208,8 +264,9 @@ inline bool init() {
     const float sc = 1.5f;   // 描画1px = 画面(1080p)1.5px
     // 右上のタイマー: 200x44
     if (R_FAILED(rc = createLayer(g_timer, 200, 44, 1920 - 200 * sc - 30, 30, sc))) { setStatus("timer", rc); }
-    // 左下の通知: 640x52
-    Result rc2 = createLayer(g_toast, 640, 52, 30, 1080 - 52 * sc - 40, sc);
+    // 左下の通知: 600x64(初めは画面の下の外に置いておく)
+    Result rc2 = createLayer(g_toast, kToastW, kToastH, kToastX, kToastHideY, kToastScale);
+    g_toastY = kToastHideY;
     if (R_FAILED(rc2)) setStatus("toast", rc2);
     g_ready = g_timer.ok || g_toast.ok;
     if (g_timer.ok && g_toast.ok) snprintf(g_status, sizeof(g_status), "OK");
@@ -227,17 +284,30 @@ inline void exit() {
     g_ready = false;
 }
 
-// ---- 表示内容の設定(どのスレッドからでも可) ----
-constexpr u32 kWhite  = 0xFFFFFFFF;
-constexpr u32 kGreen  = 0xFF90E0A0;
-constexpr u32 kOrange = 0xFF40B0FF;
-constexpr u32 kRed    = 0xFF4040FF;
+inline Icon g_toastIcon = Icon::Info;
 
-inline void toast(const char *msg, u32 color = kWhite, u32 ms = 3000) {
+// 通知の位置(下から飛び出して、少し行き過ぎて戻る = ポップな動き)
+constexpr float kToastScale = 1.5f;
+constexpr int kToastW = 600, kToastH = 64;
+constexpr float kToastX = 30;
+constexpr float kToastShowY = 1080 - kToastH * kToastScale - 36;   // 表示中の位置
+constexpr float kToastHideY = 1080 + 8;                            // 画面の下の外
+constexpr u64 kPopInMs = 320, kPopOutMs = 220;
+
+inline float easeOutBack(float t) {   // 少し行き過ぎて戻る
+    const float c1 = 1.9f, c3 = c1 + 1;
+    const float u = t - 1;
+    return 1 + c3 * u * u * u + c1 * u * u;
+}
+inline float easeInCubic(float t) { return t * t * t; }
+
+// ---- 表示内容の設定(どのスレッドからでも可) ----
+inline void toast(const char *msg, Icon icon = Icon::Info, u32 ms = 3000) {
     mutexLock(&g_lock);
     snprintf(g_toastText, sizeof(g_toastText), "%s", msg);
-    g_toastColor = color;
-    g_toastUntilMs = nowMs() + ms;
+    g_toastIcon = icon;
+    g_toastShownMs = nowMs();
+    g_toastUntilMs = g_toastShownMs + ms;
     g_toastDirty = true;
     mutexUnlock(&g_lock);
 }
@@ -252,42 +322,54 @@ inline void setTimer(bool on, const char *txt) {
     mutexUnlock(&g_lock);
 }
 
-// 変化があったときだけ描き直す(監視スレッドから0.1秒ごとに呼ぶ)
-inline void tick() {
-    if (!g_ready) return;
+// 変化があったときだけ描き直す(監視スレッドから呼ぶ)。
+// 通知が動いている間は true を返すので、呼ぶ側は間隔を短く(約16ms)する
+inline bool tick() {
+    if (!g_ready) return false;
     mutexLock(&g_lock);
     char toastText[128], timerText[32];
-    const bool toastOn = g_toastUntilMs != 0 && nowMs() < g_toastUntilMs;
-    const bool toastNeed = g_toastDirty || (g_toast.visible && !toastOn);
+    const u64 now = nowMs();
+    const u64 shownAt = g_toastShownMs, until = g_toastUntilMs;
+    const bool toastNeed = g_toastDirty;
+    const Icon icon = g_toastIcon;
     const bool timerNeed = g_timerDirty;
     const bool timerOn = g_timerOn;
     std::memcpy(toastText, g_toastText, sizeof(toastText));
     std::memcpy(timerText, g_timerText, sizeof(timerText));
-    const u32 toastColor = g_toastColor;
     g_toastDirty = false;
     g_timerDirty = false;
     mutexUnlock(&g_lock);
 
-    if (toastNeed && g_toast.ok) {
-        u32 stride = 0;
-        u16 *px = static_cast<u16 *>(framebufferBegin(&g_toast.fb, &stride));
-        Canvas c{ px, stride / 2, g_toast.w, g_toast.h };
-        for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 2);
-        if (toastOn) {
-            // 長い文は文字を小さくして収める
-            float fs = 22;
-            int tw = textWidth(toastText, fs);
-            if (tw > c.w - 40) {
-                fs = std::max(15.f, fs * float(c.w - 40) / float(tw));
-                tw = textWidth(toastText, fs);
-                if (tw > c.w - 40) tw = c.w - 40;
-            }
-            fill(c, 0, 4, tw + 40, c.h - 8, 0xD8181818, 12);
-            fill(c, 0, 4, 6, c.h - 8, toastColor, 0);
-            text(c, 22, c.h / 2 + 8, toastText, fs, kWhite);
+    bool animating = false;
+    if (g_toast.ok) {
+        // 新しい通知が来たら1回だけ描く(動かすのはレイヤーの位置だけなので軽い)
+        if (toastNeed) {
+            u32 stride = 0;
+            u16 *px = static_cast<u16 *>(framebufferBegin(&g_toast.fb, &stride));
+            Canvas c{ px, stride / 2, g_toast.w, g_toast.h };
+            for (int y = 0; y < c.h; y++) std::memset(px + y * c.stride, 0, size_t(c.w) * 2);
+            drawToast(c, toastText, icon);
+            framebufferEnd(&g_toast.fb);
         }
-        framebufferEnd(&g_toast.fb);
-        g_toast.visible = toastOn;
+        // 位置を計算: 飛び出す → 表示 → 下に引っ込む
+        float y = kToastHideY;
+        if (until != 0 && now < until) {
+            const u64 t = now - shownAt;
+            if (t < kPopInMs) {
+                y = kToastHideY + (kToastShowY - kToastHideY) * easeOutBack(float(t) / kPopInMs);
+                animating = true;
+            } else {
+                y = kToastShowY;
+            }
+        } else if (until != 0 && now < until + kPopOutMs) {
+            y = kToastShowY + (kToastHideY - kToastShowY) * easeInCubic(float(now - until) / kPopOutMs);
+            animating = true;
+        }
+        if (y != g_toastY) {
+            viSetLayerPosition(&g_toast.layer, kToastX, y);
+            g_toastY = y;
+        }
+        g_toast.visible = y < kToastHideY;
     }
 
     if (timerNeed && g_timer.ok) {
@@ -307,6 +389,7 @@ inline void tick() {
         framebufferEnd(&g_timer.fb);
         g_timer.visible = timerOn;
     }
+    return animating;
 }
 
 } // namespace osd
