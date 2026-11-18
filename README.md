@@ -50,7 +50,7 @@ Everything is saved to the SD card. No PC, Wi‑Fi or phone is needed.
 
 Download the latest version from the [**Releases**](../../releases/latest) page. Each app comes in an **English** and a **Japanese** version; only the on-screen text differs.
 
-- **`RecMenu-RecGallery-en.zip`** (English) or **`RecMenu-RecGallery-ja.zip`** (Japanese): both apps. Extract it to the root of your SD card.
+- **`Rec-Menu-and-Gallery-en.zip`** (English) or **`Rec-Menu-and-Gallery-ja.zip`** (Japanese): both apps. Extract it to the root of your SD card.
 - `RecMenu-en.ovl` / `RecMenu-ja.ovl`, `RecGallery-en.nro` / `RecGallery-ja.nro`: each app on its own.
 
 The files go in these locations on the SD card. Keep the file extensions as they are.
@@ -211,7 +211,7 @@ Use at your own risk.
 
 最新版は [**Releases**](../../releases/latest) のページからダウンロードできます。どちらのアプリも **英語版** と **日本語版** があり、違うのは画面に出る文字だけです。
 
-- **`RecMenu-RecGallery-ja.zip`**（日本語版）または **`RecMenu-RecGallery-en.zip`**（英語版）：2つのアプリのセットです。SDカードの一番上（ルート）に展開してください。
+- **`Rec-Menu-and-Gallery-ja.zip`**（日本語版）または **`Rec-Menu-and-Gallery-en.zip`**（英語版）：2つのアプリのセットです。SDカードの一番上（ルート）に展開してください。
 - `RecMenu-ja.ovl` / `RecMenu-en.ovl`、`RecGallery-ja.nro` / `RecGallery-en.nro`：それぞれのアプリだけのファイルです。
 
 ファイルはSDカードの次の場所に置きます。拡張子は変えないでください。
