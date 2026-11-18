@@ -11,22 +11,18 @@ Record your Switch gameplay to MP4 and watch it on the console. No PC needed.
 
 ### Download
 
-Each app comes in an **English** and a **Japanese** version. They work the same; only the on-screen text differs.
+Each app comes in an **English** and a **Japanese** version. They work the same; only the on-screen text differs. Download the two files for your language.
 
-| File | What it is |
-|---|---|
-| **`Rec-Menu-and-Gallery-en.zip`** | **English version of both apps — recommended.** Extract it to the root of your SD card. |
-| `Rec-Menu-and-Gallery-ja.zip` | Japanese version of both apps. |
-| `RecMenu-en.ovl` / `RecMenu-ja.ovl` | Rec Menu only |
-| `RecGallery-en.nro` / `RecGallery-ja.nro` | Rec Gallery only |
+| File | What it is | Put it in |
+|---|---|---|
+| **`RecMenu-en.ovl`** | Rec Menu, English | `switch/.overlays/` |
+| **`RecGallery-en.nro`** | Rec Gallery, English | `switch/` |
+| `RecMenu-ja.ovl` | Rec Menu, Japanese | `switch/.overlays/` |
+| `RecGallery-ja.nro` | Rec Gallery, Japanese | `switch/` |
 
 ### Install
 
-1. Extract `Rec-Menu-and-Gallery-en.zip` to the root of your SD card. It contains:
-   ```text
-   switch/.overlays/RecMenu.ovl
-   switch/RecGallery.nro
-   ```
+1. Copy the `.ovl` to `switch/.overlays/` and the `.nro` to `switch/` on your SD card. You can rename them (for example to `RecMenu.ovl` and `RecGallery.nro`); just keep the extensions.
 2. **If you have an older Rec Menu**, delete its old `.ovl` from `switch/.overlays/` first. Otherwise both appear in the Ultrahand list and it's easy to open the old one.
    Likewise, if you put an older Rec Gallery in another folder (for example `switch/RecGallery/`), delete it so only one shows up in the Homebrew Menu.
 3. Recordings and screenshots are saved to `switch/rec-menu/`.
@@ -57,22 +53,18 @@ Switchのゲームを録画してMP4で保存し、本体で見られるソフ�
 
 ### ダウンロード
 
-どちらのアプリも **英語版** と **日本語版** があります。機能は同じで、画面に出る文字だけが違います。
+どちらのアプリも **英語版** と **日本語版** があります。機能は同じで、画面に出る文字だけが違います。使いたい言語のファイルを2つダウンロードしてください。
 
-| ファイル | 中身 |
-|---|---|
-| **`Rec-Menu-and-Gallery-ja.zip`** | **2つのアプリの日本語版。おすすめです。** SDカードの一番上に展開してください。 |
-| `Rec-Menu-and-Gallery-en.zip` | 2つのアプリの英語版 |
-| `RecMenu-ja.ovl` / `RecMenu-en.ovl` | Rec Menu だけ |
-| `RecGallery-ja.nro` / `RecGallery-en.nro` | Rec Gallery だけ |
+| ファイル | 中身 | 入れる場所 |
+|---|---|---|
+| **`RecMenu-ja.ovl`** | Rec Menu（日本語版） | `switch/.overlays/` |
+| **`RecGallery-ja.nro`** | Rec Gallery（日本語版） | `switch/` |
+| `RecMenu-en.ovl` | Rec Menu（英語版） | `switch/.overlays/` |
+| `RecGallery-en.nro` | Rec Gallery（英語版） | `switch/` |
 
 ### 入れ方
 
-1. `Rec-Menu-and-Gallery-ja.zip` を、SDカードの一番上（ルート）に展開します。中身は次の2つです。
-   ```text
-   switch/.overlays/RecMenu.ovl
-   switch/RecGallery.nro
-   ```
+1. SDカードの `switch/.overlays/` に `.ovl` を、`switch/` に `.nro` を入れます。ファイル名は変えても大丈夫です（`RecMenu.ovl`、`RecGallery.nro` など）。拡張子だけは変えないでください。
 2. **前の版のRec Menuが入っている場合は**、先に `switch/.overlays/` の古い `.ovl` を消してください。残っていると、Ultrahandの一覧に両方並んで、古い方を開いてしまいやすくなります。
    Rec Galleryも、前の版を別の場所（`switch/RecGallery/` など）に入れていた場合は消してください。ホームブリューメニューに2つ並んでしまいます。
 3. 録画した動画とスクショは `switch/rec-menu/` に保存されます。
