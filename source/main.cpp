@@ -5,13 +5,12 @@
 
 // ---------------------------------------------------------------------------
 // メニュー
-//   録画中のタイマー(右上)と通知(左下)は osd.hpp が別レイヤーに描くので、
+//   録画中のタイマー(右上)と通知(右下)は osd.hpp が別レイヤーに描くので、
 //   メニューを閉じたままでも表示され、ゲームは普通に操作できる。
 // ---------------------------------------------------------------------------
 class RecGui : public tsl::Gui {
 private:
     tsl::elm::ListItem *m_recItem = nullptr;
-    tsl::elm::ListItem *m_timeItem = nullptr;
     tsl::elm::ListItem *m_shotItem = nullptr;
     tsl::elm::ListItem *m_osdItem = nullptr;
 
@@ -19,7 +18,7 @@ public:
     RecGui() {}
 
     tsl::elm::Element *createUI() override {
-        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.2");
+        auto frame = new tsl::elm::OverlayFrame("Rec Menu", "v0.7.3");
         auto list = new tsl::elm::List();
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Recording  (saved to /switch/rec-menu)", "録画（保存先: /switch/rec-menu）")));
@@ -36,10 +35,6 @@ public:
             return true;
         });
         list->addItem(m_recItem);
-
-        m_timeItem = new tsl::elm::ListItem(TR("Elapsed", "経過時間"));
-        m_timeItem->setValue("--:--");
-        list->addItem(m_timeItem);
 
         list->addItem(new tsl::elm::CategoryHeader(TR("Settings", "設定")));
 
@@ -60,7 +55,7 @@ public:
         m_shotItem->setValue(rec::shotStatus());
         m_shotItem->setClickListener([](u64 keys) {
             if (!(keys & HidNpadButton_A)) return false;
-            // メニューを閉じてから撮る(メニューが写らないように)。結果は左下に通知
+            // メニューを閉じてから撮る(メニューが写らないように)。結果は右下に通知
             rec::requestScreenshot();
             tsl::Overlay::get()->hide();
             return true;
@@ -74,8 +69,6 @@ public:
     void update() override {
         if (m_recItem)
             m_recItem->setValue(rec::isRecording() ? TR("REC (A: stop)", "録画中（Aで停止）") : rec::recStatus());
-        if (m_timeItem)
-            m_timeItem->setValue(rec::isRecording() ? rec::elapsedText() : "--:--");
         if (m_shotItem)
             m_shotItem->setValue(rec::shotStatus());
     }

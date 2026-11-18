@@ -11,7 +11,7 @@ extern "C" u64 __nx_vi_layer_id;   // libnx の viCreateLayer が使うレイヤ
 // 画面上の小さな表示(OSD)。Teslaのメニューとは別の「レイヤー」に描くので、
 // メニューを閉じていても表示でき、ゲームの操作も邪魔しない。
 // - 右上: 録画タイマー  「● REC 01:23」
-// - 左下: 通知          「録画を開始しました」など(数秒で消える)
+// - 右下: 通知          「録画を開始しました」など(数秒で消える)
 // どちらも録画やスクリーンショットには写らない(画面出力用のレイヤースタックにだけ載せる)。
 namespace osd {
 
@@ -204,7 +204,7 @@ inline u32 iconColor(Icon i) {
     }
 }
 
-// 丸いバッジ(アイコン)と文字の、角の丸い吹き出し。左端に寄せて描く
+// 丸いバッジ(アイコン)と文字の、角の丸い吹き出し。右端に寄せて描く(画面の右下に出すため)
 inline void drawToast(Canvas &c, const char *msg, Icon icon) {
     const int h = 52, top = (c.h - h) / 2 - 2, r = h / 2;
     float fs = 22;
@@ -216,11 +216,12 @@ inline void drawToast(Canvas &c, const char *msg, Icon icon) {
         tw = std::min(textWidth(msg, fs), maxTw);
     }
     const int w = textX + tw + padR;
-    fill(c, 2, top + 4, w, h, rgb(0, 0, 0, 90), r);             // 影
-    fill(c, 0, top, w, h, rgb(36, 38, 48, 242), r);              // 本体
+    const int x0 = c.w - w - 4;                                   // 右寄せ(右に影の分だけ余白)
+    fill(c, x0 + 2, top + 4, w, h, rgb(0, 0, 0, 90), r);         // 影
+    fill(c, x0, top, w, h, rgb(36, 38, 48, 242), r);              // 本体
 
     // バッジ
-    const int bx = 30, by = top + h / 2;
+    const int bx = x0 + 30, by = top + h / 2;
     circle(c, bx, by, 19, iconColor(icon));
     switch (icon) {
         case Icon::Rec:   circle(c, bx, by, 7, kWhite); break;
@@ -237,15 +238,15 @@ inline void drawToast(Canvas &c, const char *msg, Icon icon) {
             break;
         default: circle(c, bx, by, 4, kWhite); break;
     }
-    text(c, textX, by + int(fs * 0.36f), msg, fs, kWhite);
+    text(c, x0 + textX, by + int(fs * 0.36f), msg, fs, kWhite);
 }
 
 inline Icon g_toastIcon = Icon::Info;
 
-// 通知の位置(下から飛び出して、少し行き過ぎて戻る = ポップな動き)
+// 通知の位置: 画面の右下。下から飛び出して、少し行き過ぎて戻る(ポップな動き)
 constexpr float kToastScale = 1.5f;
 constexpr int kToastW = 600, kToastH = 64;
-constexpr float kToastX = 30;
+constexpr float kToastX = 1920 - kToastW * kToastScale - 30;   // 右下
 constexpr float kToastShowY = 1080 - kToastH * kToastScale - 36;   // 表示中の位置
 constexpr float kToastHideY = 1080 + 8;                            // 画面の下の外
 constexpr u64 kPopInMs = 320, kPopOutMs = 220;
@@ -281,7 +282,7 @@ inline bool init() {
     const float sc = 1.5f;   // 描画1px = 画面(1080p)1.5px
     // 右上のタイマー: 200x44
     if (R_FAILED(rc = createLayer(g_timer, 200, 44, 1920 - 200 * sc - 30, 30, sc))) { setStatus("timer", rc); }
-    // 左下の通知: 600x64(初めは画面の下の外に置いておく)
+    // 右下の通知: 600x64(初めは画面の下の外に置いておく)
     Result rc2 = createLayer(g_toast, kToastW, kToastH, kToastX, kToastHideY, kToastScale);
     g_toastY = kToastHideY;
     if (R_FAILED(rc2)) setStatus("toast", rc2);

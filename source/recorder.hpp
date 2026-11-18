@@ -237,7 +237,7 @@ inline void closeFile() {
     freeBuffers();
 }
 
-// menu = メニューに出す短い文、note = 左下の通知
+// menu = メニューに出す短い文、note = 右下の通知
 inline void startFail(const char *menu, const char *note) {
     state().recMsg = menu;
     state().msgExpireMs = 0;
@@ -530,7 +530,7 @@ inline std::string elapsedText() {
 //   - スリープ/電源オフの直前 → 録画を止める(psc:m の通知)
 //   - HOMEボタン → 録画を止める(libtesla に入れた通知フック)
 //   - ゲームの映像が1.5秒以上来ない → 録画を止める(ゲーム終了など)
-//   - スクリーンショットの撮影、右上タイマーと左下通知の描画
+//   - スクリーンショットの撮影、右上タイマーと右下通知の描画
 // ---------------------------------------------------------------------------
 constexpr u32 kPscModuleId = 0x524D;   // 他と重ならない適当な番号
 static PscPmModule g_psc;

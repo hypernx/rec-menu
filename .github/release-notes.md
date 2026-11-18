@@ -39,7 +39,7 @@ Each app comes in an **English** and a **Japanese** version. They work the same;
 - **Only games can be recorded** (1280×720, 30 fps, with audio). The HOME Menu can't be recorded, because Rec Menu uses the same video as the console's built-in capture. Recording stops automatically when you go to the HOME Menu, put the console to sleep, or quit the game.
 - **Audio is uncompressed PCM** (about 11 MB per minute). It plays in VLC and in Rec Gallery, but some phone players may not play the sound.
 - **Can't be used together with SysDVR.**
-- **The top-right timer and bottom-left notifications are experimental.** Overlays get very little memory (4 MB on recent firmware). If **Notification display** in the menu doesn't say `OK`, they won't appear, but recording still works.
+- **The top-right timer and bottom-right notifications are experimental.** Overlays get very little memory (4 MB on recent firmware). If **Notification display** in the menu doesn't say `OK`, they won't appear, but recording still works.
 - Use at your own risk.
 
 ---
@@ -81,5 +81,5 @@ Switchのゲームを録画してMP4で保存し、本体で見られるソフ�
 - **録画できるのはゲームの画面だけです**（1280×720・30fps・音声あり）。本体の撮影機能と同じ映像を使っているので、ホーム画面は録画できません。ホーム画面に移ったとき、スリープしたとき、ゲームを終了したときは、録画が自動で止まります。
 - **音声は圧縮していないPCMです**（1分あたり約11MB）。VLCやRec Galleryでは鳴りますが、スマホのプレーヤーによっては音が出ないことがあります。
 - **SysDVRとは同時に使えません。**
-- **右上のタイマーと左下の通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **通知の表示** が `OK` になっていないときは表示されませんが、録画はそのままできます。
+- **右上のタイマーと右下の通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **通知の表示** が `OK` になっていないときは表示されませんが、録画はそのままできます。
 - 使用は自己責任でお願いします。

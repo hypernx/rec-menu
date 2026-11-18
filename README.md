@@ -24,7 +24,7 @@ Everything is saved to the SD card. No PC, Wi‑Fi or phone is needed.
 - **Records gameplay to MP4**: 1280×720 / 30 fps H.264 video with 48 kHz stereo audio, saved straight to the SD card.
   - The file is written in small fragments, so if the console crashes or loses power, everything up to that point still plays.
 - **Timer while recording**: "● REC 01:23" appears at the top-right of the screen. It stays there after you close the menu, and you can keep playing normally.
-- **Notifications** at the bottom-left of the screen when:
+- **Notifications** at the bottom-right of the screen when:
   - recording starts or stops
   - a screenshot is saved
   - an error occurs
@@ -185,7 +185,7 @@ Use at your own risk.
 - **ゲームをMP4で録画**：映像は1280×720・30fpsのH.264、音声は48kHzのステレオで、SDカードに直接保存します。
   - 少しずつ区切って書き込んでいるので、途中で本体が落ちたり電源が切れたりしても、そこまでの分は再生できます。
 - **録画中のタイマー**：画面右上に「● REC 01:23」と出ます。メニューを閉じても出たままで、ゲームはそのまま操作できます。
-- **通知**：次のときに、画面左下に通知が出ます。
+- **通知**：次のときに、画面右下に通知が出ます。
   - 録画を開始・停止したとき
   - スクショを保存したとき
   - エラーが起きたとき
