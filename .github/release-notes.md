@@ -15,15 +15,15 @@ Each app comes in an **English** and a **Japanese** version. They work the same;
 
 | File | What it is |
 |---|---|
-| **`RecMenu-RecGallery-en.zip`** | **English version of both apps — recommended.** Extract it to the root of your SD card. |
-| `RecMenu-RecGallery-ja.zip` | Japanese version of both apps. |
+| **`Rec-Menu-and-Gallery-en.zip`** | **English version of both apps — recommended.** Extract it to the root of your SD card. |
+| `Rec-Menu-and-Gallery-ja.zip` | Japanese version of both apps. |
 | `RecMenu-en.ovl` / `RecMenu-ja.ovl` | Rec Menu only |
 | `RecGallery-en.nro` / `RecGallery-ja.nro` | Rec Gallery only |
-| `debug-symbols.zip` | Debug symbols (`.elf`) for reading crash reports. You don't need this to use the apps. |
+| `symbols-debug.zip` | Debug symbols (`.elf`) for reading crash reports. You don't need this to use the apps. |
 
 ### Install
 
-1. Extract `RecMenu-RecGallery-en.zip` to the root of your SD card. It contains:
+1. Extract `Rec-Menu-and-Gallery-en.zip` to the root of your SD card. It contains:
    ```text
    switch/.overlays/RecMenu.ovl
    switch/RecGallery.nro
@@ -62,15 +62,15 @@ Switchのゲームを録画してMP4で保存し、本体で見られるソフ�
 
 | ファイル | 中身 |
 |---|---|
-| **`RecMenu-RecGallery-ja.zip`** | **2つのアプリの日本語版。おすすめです。** SDカードの一番上に展開してください。 |
-| `RecMenu-RecGallery-en.zip` | 2つのアプリの英語版 |
+| **`Rec-Menu-and-Gallery-ja.zip`** | **2つのアプリの日本語版。おすすめです。** SDカードの一番上に展開してください。 |
+| `Rec-Menu-and-Gallery-en.zip` | 2つのアプリの英語版 |
 | `RecMenu-ja.ovl` / `RecMenu-en.ovl` | Rec Menu だけ |
 | `RecGallery-ja.nro` / `RecGallery-en.nro` | Rec Gallery だけ |
-| `debug-symbols.zip` | クラッシュログを調べるためのデバッグ情報（`.elf`）。使うだけなら不要です。 |
+| `symbols-debug.zip` | クラッシュログを調べるためのデバッグ情報（`.elf`）。使うだけなら不要です。 |
 
 ### 入れ方
 
-1. `RecMenu-RecGallery-ja.zip` を、SDカードの一番上（ルート）に展開します。中身は次の2つです。
+1. `Rec-Menu-and-Gallery-ja.zip` を、SDカードの一番上（ルート）に展開します。中身は次の2つです。
    ```text
    switch/.overlays/RecMenu.ovl
    switch/RecGallery.nro
