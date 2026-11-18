@@ -24,7 +24,9 @@ struct Layer {
     bool visible = false;   // 最後に描いたとき何か表示していたか
 };
 
-inline ViDisplay g_display{};
+inline ViDisplay g_ownDisplay{};
+inline ViDisplay *g_display = nullptr;   // Teslaが開いた画面を借りる(同じ画面は2回開けない)
+inline bool g_displayOwned = false;
 inline Layer g_timer, g_toast;
 inline stbtt_fontinfo g_font;
 inline bool g_ready = false;
@@ -46,17 +48,17 @@ inline u64 nowMs() { return armTicksToNs(armGetSystemTick()) / 1000000ULL; }
 inline Result createLayer(Layer &L, int fbW, int fbH, float x, float y, float scale) {
     // libnx の viCreateLayer は __nx_vi_layer_id を使うので、一時的に差し替えて2枚目以降を作る
     u64 id = 0;
-    Result rc = viCreateManagedLayer(&g_display, ViLayerFlags(0), 0, &id);
+    Result rc = viCreateManagedLayer(g_display, ViLayerFlags(0), 0, &id);
     if (R_FAILED(rc)) return rc;
     const u64 saved = __nx_vi_layer_id;
     __nx_vi_layer_id = id;
-    rc = viCreateLayer(&g_display, &L.layer);
+    rc = viCreateLayer(g_display, &L.layer);
     __nx_vi_layer_id = saved;
     if (R_FAILED(rc)) return rc;
 
     viSetLayerScalingMode(&L.layer, ViScalingMode_FitToLayer);
     s32 z = 0;
-    if (R_SUCCEEDED(viGetZOrderCountMax(&g_display, &z)) && z > 0) viSetLayerZ(&L.layer, z);
+    if (R_SUCCEEDED(viGetZOrderCountMax(g_display, &z)) && z > 0) viSetLayerZ(&L.layer, z);
     // 画面に出す用のスタックだけ。Screenshot / Recording には載せない(撮影したものに写らない)
     tsl::hlp::viAddToLayerStack(&L.layer, ViLayerStack_Default);
     tsl::hlp::viAddToLayerStack(&L.layer, ViLayerStack_Lcd);
@@ -195,7 +197,13 @@ inline bool init() {
     if (R_FAILED(rc)) { setStatus("font", rc); return false; }
     const u8 *data = static_cast<const u8 *>(font.address);
     if (!stbtt_InitFont(&g_font, data, stbtt_GetFontOffsetForIndex(data, 0))) { snprintf(g_status, sizeof(g_status), "font init failed"); return false; }
-    if (R_FAILED(rc = viOpenDefaultDisplay(&g_display))) { setStatus("display", rc); return false; }
+    if (tsl::impl::sharedDisplay) {
+        g_display = tsl::impl::sharedDisplay;
+    } else {
+        if (R_FAILED(rc = viOpenDefaultDisplay(&g_ownDisplay))) { setStatus("display", rc); return false; }
+        g_display = &g_ownDisplay;
+        g_displayOwned = true;
+    }
 
     const float sc = 1.5f;   // 描画1px = 画面(1080p)1.5px
     // 右上のタイマー: 200x44
@@ -213,7 +221,9 @@ inline void exit() {
     if (!g_ready) return;
     destroyLayer(g_timer);
     destroyLayer(g_toast);
-    viCloseDisplay(&g_display);
+    if (g_displayOwned) viCloseDisplay(&g_ownDisplay);
+    g_displayOwned = false;
+    g_display = nullptr;
     g_ready = false;
 }
 

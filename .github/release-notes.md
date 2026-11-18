@@ -19,7 +19,6 @@ Each app comes in an **English** and a **Japanese** version. They work the same;
 | `Rec-Menu-and-Gallery-ja.zip` | Japanese version of both apps. |
 | `RecMenu-en.ovl` / `RecMenu-ja.ovl` | Rec Menu only |
 | `RecGallery-en.nro` / `RecGallery-ja.nro` | Rec Gallery only |
-| `symbols-debug.zip` | Debug symbols (`.elf`) for reading crash reports. You don't need this to use the apps. |
 
 ### Install
 
@@ -66,7 +65,6 @@ Switchのゲームを録画してMP4で保存し、本体で見られるソフ�
 | `Rec-Menu-and-Gallery-en.zip` | 2つのアプリの英語版 |
 | `RecMenu-ja.ovl` / `RecMenu-en.ovl` | Rec Menu だけ |
 | `RecGallery-ja.nro` / `RecGallery-en.nro` | Rec Gallery だけ |
-| `symbols-debug.zip` | クラッシュログを調べるためのデバッグ情報（`.elf`）。使うだけなら不要です。 |
 
 ### 入れ方
 
