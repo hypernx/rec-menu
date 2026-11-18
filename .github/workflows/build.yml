@@ -10,7 +10,7 @@ jobs:
     container: devkitpro/devkita64:latest
     steps:
       - name: Checkout (this repo)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: src
 
@@ -35,7 +35,7 @@ jobs:
           make
 
       - name: Upload ovl
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ovl
           path: |
