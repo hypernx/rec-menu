@@ -6,6 +6,9 @@ on:
     branches: ['**']
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -62,6 +65,15 @@ jobs:
           name: ovl
           path: out/*
 
+      - name: Export to git branch
+        run: |
+          mkdir -p out && cd out && mkdir x && cp RecMenu-*.ovl x/ && cd .. && rm -rf out2 && mv out/x out2 && rm -rf out && mv out2 out
+          cd out
+          git init -q -b o
+          git config user.name ci && git config user.email ci@example.com
+          git add . && git commit -qm "build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" o:claude/ovl-out
+
   gallery:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
@@ -89,6 +101,15 @@ jobs:
         with:
           name: nro
           path: out/*
+
+      - name: Export to git branch
+        run: |
+          mkdir -p out && cd out && mkdir x && cp RecGallery-*.nro x/ && cd .. && rm -rf out2 && mv out/x out2 && rm -rf out && mv out2 out
+          cd out
+          git init -q -b o
+          git config user.name ci && git config user.email ci@example.com
+          git add . && git commit -qm "build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" o:claude/nro-out
 
   # リリースページを作ってファイルを載せる
   #  - main に push したとき: source/main.cpp のバージョン(例: v0.7.0)のリリースを作る
