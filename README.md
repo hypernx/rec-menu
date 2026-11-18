@@ -1,153 +1,327 @@
 # Rec Menu / Rec Gallery
 
-Nintendo Switch homebrew capture project.
+**[English](#english)** | **[日本語](#日本語)**
 
-> **Project status:** Rec Menu (OVL) and Rec Gallery (NRO) are separate components. The NRO gallery is a separate application and is not included in the OVL. Features described below should be considered planned until they are implemented and tested in a release.
+---
 
-## Components
+## English
 
-### 1. Rec Menu (Tesla Overlay — `.ovl`)
+Homebrew tools for recording gameplay on a Nintendo Switch running custom firmware, then watching the recordings on the console.
 
-Rec Menu is the Tesla overlay component. It is launched from Tesla / UltraHand and is intended for in-game capture controls.
+| Component | Type | What it does |
+|---|---|---|
+| **Rec Menu** | Tesla overlay (`.ovl`) | Records gameplay video and audio to MP4 and takes screenshots. You open it from Ultrahand / Tesla while a game is running. |
+| **Rec Gallery** | Homebrew app (`.nro`) | Lists, plays and deletes your recordings and screenshots, a bit like the Album. You launch it from the Homebrew Menu. |
 
-Planned features:
-- Start and stop gameplay recording.
-- Show a compact recording timer at the top-right of the game screen, including after closing the UltraHand menu (requires a persistent on-screen display implementation).
-- Take screenshots.
-- Save captured media to the SD card.
+Everything is saved to the SD card. No PC, Wi‑Fi or phone is needed.
 
-### 2. Rec Gallery (Homebrew app — `.nro`)
+---
 
-Rec Gallery is a separate homebrew application, launched from the Homebrew Menu. It is not launched from the Tesla overlay menu.
+### Features
 
-Planned features:
-- Browse saved screenshots and videos.
-- Preview supported image files.
-- Play supported video files.
-- Delete selected media files.
+#### Rec Menu (overlay)
 
-## SD card installation
+- **Records gameplay to MP4**: 1280×720 / 30 fps H.264 video with 48 kHz stereo audio, saved straight to the SD card.
+  - The file is written in small fragments, so if the console crashes or loses power, everything up to that point still plays.
+- **Timer while recording**: "● REC 01:23" appears at the top-right of the screen. It stays there after you close the menu, and you can keep playing normally.
+- **Notifications** at the bottom-left of the screen when:
+  - recording starts or stops
+  - a screenshot is saved
+  - an error occurs
+- **Stops recording automatically** and shows a notification when you:
+  - press HOME (go to the HOME Menu)
+  - put the console to sleep or turn it off
+  - quit the game (the game video stops)
+- **Takes screenshots**: the menu closes before the screenshot is taken, so the menu does not appear in the image.
+- The timer, the notifications and the Tesla menu are kept out of the recorded video and the screenshots.
 
-Copy each file to its own location. Do not rename the file extensions.
+#### Rec Gallery (app)
+
+- **Two tabs, Videos and Photos**: each shows thumbnails with the date and time it was taken.
+- **Sorting**: newest first, oldest first, largest first, or smallest first.
+- **Video player**: pause, skip ±10 s / ±30 s, and a progress bar you can drag with your finger.
+- **Photo viewer**: full screen, step to the previous or next photo.
+- **Delete**: asks you to confirm first.
+- **Touch screen**: tap to open, drag to scroll, drag the progress bar, swipe between photos.
+
+---
+
+### Installation
+
+Download the latest version from the [**Releases**](../../releases/latest) page. Each app comes in an **English** and a **Japanese** version; only the on-screen text differs.
+
+- **`RecMenu-RecGallery-en.zip`** (English) or **`RecMenu-RecGallery-ja.zip`** (Japanese): both apps. Extract it to the root of your SD card.
+- `RecMenu-en.ovl` / `RecMenu-ja.ovl`, `RecGallery-en.nro` / `RecGallery-ja.nro`: each app on its own.
+
+The files go in these locations on the SD card. Keep the file extensions as they are.
 
 ```text
 SD card/
 └── switch/
     ├── .overlays/
-    │   └── RecMenu.ovl
+    │   └── RecMenu-vX.Y.Z.ovl      ← Rec Menu (the file name can be anything)
     ├── RecGallery/
-    │   └── RecGallery.nro
-    └── rec-menu/
+    │   └── RecGallery.nro          ← Rec Gallery
+    └── rec-menu/                   ← created automatically; recordings and screenshots go here
+        ├── rec_00000.mp4
         └── shot_00000.jpg
 ```
 
-### Install Rec Menu (`.ovl`)
+1. Create `/switch/.overlays/` if it does not exist (the name starts with a dot), and copy the `.ovl` file into it.
+2. Create `/switch/RecGallery/` and copy `RecGallery.nro` into it.
+3. **When you update Rec Menu, delete the old `.ovl` first.** If old and new copies are both in `.overlays`, they show up side by side in the Ultrahand list and it is easy to open the old one. Check the version number shown in the Ultrahand list and in the top-right of the menu.
 
-1. On the SD card, open `/switch/`.
-2. Create a folder named `.overlays` if it does not already exist.
-3. Copy `RecMenu.ovl` into `/switch/.overlays/`.
-4. Open Tesla / UltraHand and select Rec Menu from the overlay list.
+#### Requirements
 
-### Install Rec Gallery (`.nro`)
+- A Nintendo Switch running custom firmware (Atmosphère)
+- **Rec Menu**: Ultrahand (or Tesla)
+- **Rec Gallery**: the Homebrew Menu. For smoother playback, launch it through a game (hold **R** while starting a game) rather than from the Album; Album (applet) mode gets less memory and CPU.
 
-1. On the SD card, open `/switch/`.
-2. Create a folder named `RecGallery`.
-3. Copy `RecGallery.nro` into `/switch/RecGallery/`.
-4. Open the Homebrew Menu and launch Rec Gallery.
+---
 
-The NRO is a standalone application. It is separate from the OVL and must be installed separately. The gallery will only be usable once a Rec Gallery NRO release is provided.
+### Controls
 
-## Capture storage
+#### Rec Menu
 
-The current screenshot code uses:
+Open the overlay with the Ultrahand button combo (default: **L + D‑pad Down + Right Stick press**).
 
-`sdmc:/switch/rec-menu/shot_00000.jpg`
+| Item | Action |
+|---|---|
+| **Record** | **A** starts recording. The menu closes and you go back to the game. Open the menu again and press **A** to stop. |
+| **Show timer (top right)** | Turns the recording timer on or off. |
+| **Notification display** | Shows whether the timer and notifications are working (`OK`, or which step failed). |
+| **Screenshot** | **A** closes the menu and saves a screenshot. |
 
-New captures use incrementing filenames to avoid overwriting existing screenshots. The gallery and recorder should use this same directory. Video subfolders or alternate paths should only be documented after they are implemented.
+While recording, **B** only hides the menu. It does not stop the recording.
 
-No Wi-Fi connection or smartphone transfer is required; media remains on the SD card.
+#### Rec Gallery
 
-## Requirements
+| Screen | Button | Action |
+|---|---|---|
+| List | D‑pad / Left Stick | Select an item |
+| | **A** | Play the video / open the photo |
+| | **X** | Delete (asks to confirm) |
+| | **L / R** | Switch between Videos and Photos |
+| | **−** | Change the sort order |
+| | **Y** | Reload the list |
+| | **+ / B** | Exit |
+| Video | **A** | Pause / resume |
+| | **← / →** | Back / forward 10 seconds |
+| | **L / R** | Back / forward 30 seconds |
+| | **B** | Back to the list |
+| Photo | **← / →** (or L / R) | Previous / next photo |
+| | **X** | Delete |
+| | **B** | Back to the list |
 
-- Nintendo Switch with a compatible custom firmware / homebrew environment.
-- Tesla / UltraHand for the OVL component.
-- Homebrew Menu for the NRO component.
-- SD card.
+**Touch screen** (handheld mode):
+
+| Screen | Touch | Action |
+|---|---|---|
+| List | Tap a thumbnail | Play the video / open the photo |
+| | Drag up / down | Scroll |
+| | Tap a tab or the sort order | Switch tabs / change the sort order |
+| Video | Tap | Show the controls, then pause / resume |
+| | Drag along the progress bar | Jump to that position |
+| | Tap **＜ 戻る** (top-left) | Back to the list |
+| Photo | Swipe left / right | Next / previous photo |
+| | Tap | Show / hide the info bar |
+| | Tap **X: 削除** (bottom-right) | Delete (asks to confirm) |
+| | Tap **＜ 戻る** (top-left) | Back to the list |
+
+---
+
+### Limitations
+
+- **Only games can be recorded.** Rec Menu uses the console's built-in game video capture stream (the same video the 30‑second capture button uses), so the HOME Menu and other system screens cannot be recorded. Some games that do not allow video capture cannot be recorded either.
+- **Audio is uncompressed PCM** (about 11 MB per minute). The audio plays in VLC on PC and in Rec Gallery, but some phone video players may not play it.
+- **Leaving Rec Menu stops the recording.** Hiding the menu is fine, but if you go back to the Ultrahand overlay list or open another overlay, Rec Menu closes and the recording stops (everything up to that point is saved).
+- **Cannot be used with SysDVR.** Both use the same video stream. Rec Menu shows an error if SysDVR is running.
+- **The timer and notifications are experimental.** Overlays only get a small amount of memory (4 MB on recent firmware). If **Notification display** shows something other than `OK`, the timer and notifications are unavailable, but recording still works.
+- **Rec Gallery plays videos in software (CPU only).** Playback may stutter depending on conditions.
+
+---
+
+### Source layout
+
+```text
+source/            Rec Menu (overlay)
+  main.cpp           Menu UI
+  recorder.hpp       Recording (grc:d), screenshots, stopping on sleep/HOME, monitor thread
+  mp4.hpp            Fragmented MP4 writer (H.264 + PCM)
+  osd.hpp            Timer and notification display (separate layer from Tesla)
+  lang.hpp           English / Japanese text (built with -DLANG_JA for Japanese)
+gallery/           Rec Gallery (NRO)
+  source/main.cpp    List, video playback, photo viewer, delete
+  icon.jpg           App icon
+```
+
+### Credits
+
+- [SysDVR](https://github.com/exelix11/SysDVR) by exelix11: reference for the safe way to use `grc:d` and for the SPS/PPS values
+- [libtesla](https://github.com/WerWolv/libtesla) / [Tesla-Template](https://github.com/WerWolv/Tesla-Template) by WerWolv
+- [Ultrahand Overlay](https://github.com/ppkantorski/Ultrahand-Overlay) / nx-ovlloader
+- [libnx](https://github.com/switchbrew/libnx), [devkitPro](https://devkitpro.org/), FFmpeg, SDL2
+
+Use at your own risk.
+
+---
 
 ## 日本語
 
-# Rec Menu / Rec Gallery
+カスタムファームウェアで動いているNintendo Switchで、ゲームを録画して、その動画を本体で見るための自作ソフトです。
 
-Nintendo Switch向けのキャプチャ関連自作ソフトプロジェクトです。
+| ソフト | 種類 | できること |
+|---|---|---|
+| **Rec Menu** | Teslaオーバーレイ（`.ovl`） | ゲームの映像と音声をMP4で録画したり、スクリーンショットを撮ったりします。ゲーム中にUltrahand / Teslaから開きます。 |
+| **Rec Gallery** | 自作アプリ（`.nro`） | 録画した動画やスクリーンショットを、アルバムのように一覧・再生・削除します。ホームブリューメニューから起動します。 |
 
-> **開発状況：** Rec Menu（OVL）とRec Gallery（NRO）は別々のコンポーネントです。NRO版ギャラリーはOVLとは別の独立アプリであり、OVLに含まれるものではありません。以下の機能は、リリースで実装・動作確認されるまでは予定機能として扱ってください。
+保存先はすべてSDカードです。パソコン、Wi‑Fi、スマホは必要ありません。
 
-## コンポーネント
+---
 
-### 1. Rec Menu（Teslaオーバーレイ — `.ovl`）
+### 機能
 
-Tesla / UltraHandから起動するオーバーレイです。ゲーム中のキャプチャ操作を担当します。
+#### Rec Menu（オーバーレイ）
 
-予定機能：
-- ゲーム録画の開始・停止。
-- UltraHandのメニューを閉じたあとも、ゲーム画面右上に小さな録画タイマーを表示（常時表示には専用の表示処理が必要です）。
-- スクリーンショット撮影。
-- キャプチャデータのSDカード保存。
+- **ゲームをMP4で録画**：映像は1280×720・30fpsのH.264、音声は48kHzのステレオで、SDカードに直接保存します。
+  - 少しずつ区切って書き込んでいるので、途中で本体が落ちたり電源が切れたりしても、そこまでの分は再生できます。
+- **録画中のタイマー**：画面右上に「● REC 01:23」と出ます。メニューを閉じても出たままで、ゲームはそのまま操作できます。
+- **通知**：次のときに、画面左下に通知が出ます。
+  - 録画を開始・停止したとき
+  - スクショを保存したとき
+  - エラーが起きたとき
+- **自動で録画を停止**：次のときは録画を自動で止めて、通知を出します。
+  - HOMEボタンを押してホーム画面に移ったとき
+  - スリープしたとき、電源を切ったとき
+  - ゲームを終了したとき（ゲームの映像が止まったとき）
+- **スクリーンショット**：メニューを閉じてから撮るので、メニューは写りません。
+- タイマー・通知・Teslaのメニューは、録画した動画にもスクショにも写りません。
 
-### 2. Rec Gallery（自作アプリ — `.nro`）
+#### Rec Gallery（アプリ）
 
-Homebrew Menuから起動する独立したアプリです。Teslaオーバーレイから起動するものではありません。
+- **動画と写真のタブ**：それぞれサムネイルと撮影日時が一覧で出ます。
+- **並び替え**：新しい順・古い順・大きい順・小さい順を切り替えられます。
+- **動画の再生**：一時停止、10秒・30秒の早送りと巻き戻し、指でなぞって動かせる再生位置のバーがあります。
+- **写真の表示**：全画面で表示して、前後の写真に移動できます。
+- **削除**：削除する前に確認が出ます。
+- **タッチ操作**：タップで開く、ドラッグでスクロール、再生バーをなぞって移動、スワイプで写真を切り替え。
 
-予定機能：
-- 保存した画像・動画の一覧表示。
-- 対応画像のプレビュー。
-- 対応動画の再生。
-- 選択したメディアファイルの削除。
+---
 
-## SDカードへの配置方法
+### 入れ方
 
-OVLとNROは、それぞれ別のフォルダに配置します。拡張子は変更しないでください。
+最新版は [**Releases**](../../releases/latest) のページからダウンロードできます。どちらのアプリも **英語版** と **日本語版** があり、違うのは画面に出る文字だけです。
+
+- **`RecMenu-RecGallery-ja.zip`**（日本語版）または **`RecMenu-RecGallery-en.zip`**（英語版）：2つのアプリのセットです。SDカードの一番上（ルート）に展開してください。
+- `RecMenu-ja.ovl` / `RecMenu-en.ovl`、`RecGallery-ja.nro` / `RecGallery-en.nro`：それぞれのアプリだけのファイルです。
+
+ファイルはSDカードの次の場所に置きます。拡張子は変えないでください。
 
 ```text
 SDカード/
 └── switch/
     ├── .overlays/
-    │   └── RecMenu.ovl
+    │   └── RecMenu-vX.Y.Z.ovl      ← Rec Menu（ファイル名は自由です）
     ├── RecGallery/
-    │   └── RecGallery.nro
-    └── rec-menu/
+    │   └── RecGallery.nro          ← Rec Gallery
+    └── rec-menu/                   ← 自動で作られます。動画とスクショはここに保存されます
+        ├── rec_00000.mp4
         └── shot_00000.jpg
 ```
 
-### Rec Menu（.ovl）の導入
+1. `/switch/.overlays/` フォルダがなければ作ってください（名前の先頭にドットが付きます）。そこに `.ovl` ファイルを入れます。
+2. `/switch/RecGallery/` フォルダを作って、`RecGallery.nro` を入れます。
+3. **Rec Menuを新しい版にするときは、先に古い `.ovl` を消してください。** 古いファイルと新しいファイルが両方 `.overlays` にあると、Ultrahandの一覧に並んで表示され、古い方を開いてしまいやすくなります。Ultrahandの一覧とメニューの右上にバージョンが出るので、それで確認してください。
 
-1. SDカード内の `/switch/` フォルダを開きます。
-2. `.overlays` フォルダがなければ作成します（先頭のドットも含めてください）。
-3. `RecMenu.ovl` を `/switch/.overlays/` にコピーします。
-4. Tesla / UltraHandを開き、オーバーレイ一覧からRec Menuを選択します。
+#### 必要なもの
 
-### Rec Gallery（.nro）の導入
+- カスタムファームウェア（Atmosphère）で動いているNintendo Switch本体
+- **Rec Menu**：Ultrahand（またはTesla）
+- **Rec Gallery**：ホームブリューメニュー。アルバムから起動するより、ゲームのアイコンで **R** を押しながら起動するのがおすすめです。アルバムから起動すると使えるメモリとCPUが少なくなり、再生がカクつきやすくなります。
 
-1. SDカード内の `/switch/` フォルダを開きます。
-2. `RecGallery` フォルダを作成します。
-3. `RecGallery.nro` を `/switch/RecGallery/` にコピーします。
-4. Homebrew Menuを開き、Rec Galleryを起動します。
+---
 
-NROはOVLとは別の独立アプリです。別々に配置・起動する必要があります。Rec GalleryのNROがリリースされるまでは、ギャラリー機能は利用できません。
+### 操作方法
 
-## キャプチャデータの保存先
+#### Rec Menu
 
-現在のスクリーンショットコードの保存先：
+Ultrahandを開くボタン（初期設定は **L＋十字キー下＋右スティック押し込み**）でメニューを開きます。
 
-`sdmc:/switch/rec-menu/shot_00000.jpg`
+| 項目 | 操作 |
+|---|---|
+| **録画**（英語版: Record） | **A** で録画を開始します。メニューが閉じてゲームに戻ります。止めるときは、もう一度メニューを開いて **A** を押します。 |
+| **右上にタイマーを表示**（Show timer） | 録画中のタイマーを表示するかどうかを切り替えます。 |
+| **通知の表示**（Notification display） | タイマーと通知が使えるかを表示します（`OK` か、どこで失敗したか）。 |
+| **スクリーンショット**（Screenshot） | **A** を押すとメニューが閉じて、スクショを保存します。 |
 
-既存ファイルを上書きしないよう、撮影ごとに連番を使用します。ギャラリーと録画機能も同じフォルダを参照する設計にします。動画用サブフォルダや別の保存先は、実装後にREADMEへ追記します。
+録画中に **B** を押しても、メニューが隠れるだけで録画は止まりません。
 
-Wi-Fi接続やスマートフォンへの転送は必要ありません。メディアはSDカード内に保存します。
+#### Rec Gallery
 
-## 必要なもの
+| 画面 | ボタン | 操作 |
+|---|---|---|
+| 一覧 | 十字キー / 左スティック | 選ぶ |
+| | **A** | 動画を再生する / 写真を表示する |
+| | **X** | 削除する（確認が出ます） |
+| | **L / R** | 動画と写真を切り替える |
+| | **−** | 並び順を変える |
+| | **Y** | 一覧を読み直す |
+| | **＋ / B** | 終了する |
+| 動画 | **A** | 一時停止 / 再開 |
+| | **← / →** | 10秒戻る / 進む |
+| | **L / R** | 30秒戻る / 進む |
+| | **B** | 一覧に戻る |
+| 写真 | **← / →**（または L / R） | 前の写真 / 次の写真 |
+| | **X** | 削除する |
+| | **B** | 一覧に戻る |
 
-- 対応するカスタムファームウェア／自作ソフト環境のNintendo Switch本体
-- OVL版にはTesla / UltraHand
-- NRO版にはHomebrew Menu
-- SDカード
+**タッチ操作**（携帯モード）：
+
+| 画面 | タッチ | 操作 |
+|---|---|---|
+| 一覧 | サムネイルをタップ | 動画を再生する / 写真を表示する |
+| | 上下にドラッグ | スクロールする |
+| | タブや並び順をタップ | タブを切り替える / 並び順を変える |
+| 動画 | タップ | 操作バーを出す。出ているときは一時停止 / 再開 |
+| | 再生バーをなぞる | その位置に移動する |
+| | 左上の **＜ 戻る** をタップ | 一覧に戻る |
+| 写真 | 左右にスワイプ | 次の写真 / 前の写真 |
+| | タップ | 情報バーを出す / 消す |
+| | 右下の **X: 削除** をタップ | 削除する（確認が出ます） |
+| | 左上の **＜ 戻る** をタップ | 一覧に戻る |
+
+---
+
+### できないこと・注意点
+
+- **録画できるのはゲームの画面だけです。** 本体の動画撮影機能（キャプチャボタン長押しの30秒動画）と同じ映像を使っているので、ホーム画面やシステムの画面は録画できません。動画撮影ができないゲームも録画できません。
+- **音声は圧縮していないPCMです**（1分あたり約11MB）。パソコンのVLCやRec Galleryでは鳴りますが、スマホの動画プレーヤーによっては音が出ないことがあります。
+- **Rec Menuを終了すると録画も止まります。** メニューを隠すだけなら録画は続きます。ただし、Ultrahandのオーバーレイ一覧に戻ったり、別のオーバーレイを開いたりするとRec Menu自体が終了するので、録画もそこで止まります（そこまでの分は保存されます）。
+- **SysDVRとは同時に使えません。** 同じ映像を使うためです。SysDVRが動いているときは、録画を始めようとするとエラーが出ます。
+- **タイマーと通知は試験的な機能です。** オーバーレイで使えるメモリは少なく、最近のファームウェアでは4MBしかありません。メニューの **通知の表示** が `OK` 以外になっているときは、タイマーと通知は出ません。録画はそのままできます。
+- **Rec GalleryはCPUだけで動画を再生しています。** 状況によっては再生がカクつくことがあります。
+
+---
+
+### ソースの構成
+
+```text
+source/            Rec Menu（オーバーレイ）
+  main.cpp           メニュー画面
+  recorder.hpp       録画（grc:d）、スクショ、スリープ・HOMEでの停止、監視スレッド
+  mp4.hpp            MP4（fragmented MP4）の書き出し（H.264＋PCM）
+  osd.hpp            タイマーと通知の表示（Teslaとは別のレイヤー）
+  lang.hpp           英語 / 日本語の文字（-DLANG_JA を付けてビルドすると日本語）
+gallery/           Rec Gallery（NRO）
+  source/main.cpp    一覧、動画再生、写真表示、削除
+  icon.jpg           アプリのアイコン
+```
+
+### 参考にしたもの・使っているもの
+
+- exelix11氏の [SysDVR](https://github.com/exelix11/SysDVR)：`grc:d` を安全に使う方法と、SPS/PPSの値を参考にしました
+- WerWolv氏の [libtesla](https://github.com/WerWolv/libtesla) / [Tesla-Template](https://github.com/WerWolv/Tesla-Template)
+- [Ultrahand Overlay](https://github.com/ppkantorski/Ultrahand-Overlay) / nx-ovlloader
+- [libnx](https://github.com/switchbrew/libnx)、[devkitPro](https://devkitpro.org/)、FFmpeg、SDL2
+
+使用は自己責任でお願いします。
