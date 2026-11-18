@@ -677,8 +677,8 @@ static void playVideo(const Entry &e) {
 // ---------------------------------------------------------------------------
 // 写真の表示
 // ---------------------------------------------------------------------------
-static void drawList(int sel, int scrollRow, const std::string &toast, u64 toastUntil);
-static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPhoto, SDL_Texture *photo);
+static void drawList(int sel, int scrollY, const std::string &toast, u64 toastUntil);
+static bool confirmDelete(int sel, int scrollY, const char *what, bool overPhoto, SDL_Texture *photo);
 static bool deleteEntry(int &sel, std::string &toast);
 
 // 写真を全画面で表示する。←→で前後の写真へ。戻ったときの選択位置を sel に返す
@@ -766,10 +766,16 @@ static void viewPhotos(int &sel, std::string &toast, u64 &toastUntil) {
 // ---------------------------------------------------------------------------
 constexpr int kCols = 4;
 constexpr int kCellW = 300, kCellH = 222;
-constexpr int kGridX = (W - kCols * kCellW) / 2, kGridY = 120;
-constexpr int kVisibleRows = 3;
+constexpr int kGridX = (W - kCols * kCellW) / 2;
+// 一覧を表示する範囲(ヘッダーの下からフッターの上まで)。この中をピクセル単位でスクロールする
+constexpr int kViewTop = 108, kViewBottom = H - 48, kViewH = kViewBottom - kViewTop;
+constexpr int kGridPad = 14;   // 一覧の上の余白
 
-static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPhoto, SDL_Texture *photo) {
+static int contentHeight(int n) { return kGridPad + ((n + kCols - 1) / kCols) * kCellH; }
+static int maxScroll(int n) { return std::max(0, contentHeight(n) - kViewH); }
+static int rowTop(int row, int scrollY) { return kViewTop + kGridPad + row * kCellH - scrollY; }
+
+static bool confirmDelete(int sel, int scrollY, const char *what, bool overPhoto, SDL_Texture *photo) {
     const Entry &e = cur()[sel];
     while (appletMainLoop()) {
         g_frameNo++;
@@ -790,7 +796,7 @@ static bool confirmDelete(int sel, int scrollRow, const char *what, bool overPho
             SDL_RenderClear(g_ren);
             if (photo) SDL_RenderCopy(g_ren, photo, nullptr, nullptr);
         } else {
-            drawList(sel, scrollRow, "", 0);
+            drawList(sel, scrollY, "", 0);
         }
         fillRect(0, 0, W, H, 0, 0, 0, 150);
         const int bw = 640, bh = 240, bx = (W - bw) / 2, by = (H - bh) / 2;
@@ -821,7 +827,7 @@ static bool deleteEntry(int &sel, std::string &toast) {
     return true;
 }
 
-static void drawList(int sel, int scrollRow, const std::string &toast, u64 toastUntil) {
+static void drawList(int sel, int scrollY, const std::string &toast, u64 toastUntil) {
     const std::vector<Entry> &list = cur();
     SDL_SetRenderDrawColor(g_ren, 24, 24, 28, 255);
     SDL_RenderClear(g_ren);
@@ -850,11 +856,15 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
                  kGray, Center);
     }
 
-    for (int i = scrollRow * kCols; i < int(list.size()) && i < (scrollRow + kVisibleRows) * kCols; i++) {
+    // 一覧の範囲の外にはみ出さないように切り取る
+    SDL_Rect clip{ 0, kViewTop, W, kViewH };
+    SDL_RenderSetClipRect(g_ren, &clip);
+    for (int i = 0; i < int(list.size()); i++) {
         const Entry &e = list[i];
-        const int row = i / kCols - scrollRow, col = i % kCols;
+        const int row = i / kCols, col = i % kCols;
         const int x = kGridX + col * kCellW + (kCellW - kThumbW) / 2;
-        const int y = kGridY + row * kCellH;
+        const int y = rowTop(row, scrollY);
+        if (y + kCellH < kViewTop || y > kViewBottom) continue;   // 見えていない
         if (e.thumb) {
             SDL_Rect r{ x, y, kThumbW, kThumbH };
             SDL_RenderCopy(g_ren, e.thumb, nullptr, &r);
@@ -870,6 +880,17 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
         }
         drawText(g_fontS, fmtDate(e.mtime), x, y + kThumbH + 8, i == sel ? kWhite : kGray);
         if (i == sel) strokeRect(x - 6, y - 6, kThumbW + 12, kThumbH + 12, 4, 0, 220, 200);
+    }
+
+    SDL_RenderSetClipRect(g_ren, nullptr);
+
+    // スクロールバー(スクロールできるときだけ)
+    const int ms = maxScroll(int(list.size()));
+    if (ms > 0) {
+        const int barH = std::max(40, kViewH * kViewH / contentHeight(int(list.size())));
+        const int barY = kViewTop + (kViewH - barH) * scrollY / ms;
+        fillRect(W - 10, kViewTop, 4, kViewH, 255, 255, 255, 30);
+        fillRect(W - 10, barY, 4, barH, 255, 255, 255, 150);
     }
 
     // フッター
@@ -891,7 +912,7 @@ static void drawList(int sel, int scrollRow, const std::string &toast, u64 toast
 }
 
 static void galleryLoop() {
-    int sel[2] = { 0, 0 }, scrollRow[2] = { 0, 0 };
+    int sel[2] = { 0, 0 }, scrollY[2] = { 0, 0 };
     std::string toast;
     u64 toastUntil = 0;
     scanDir(TabVideo);
@@ -901,12 +922,13 @@ static void galleryLoop() {
         g_frameNo++;
         Input in = readInput();
         int &s = sel[g_tab];
-        int &sr = scrollRow[g_tab];
+        int &sy = scrollY[g_tab];
+        const int prevSel = s;
         std::vector<Entry> &list = cur();
         const int n = int(list.size());
 
         if (in.down & (HidNpadButton_Plus | HidNpadButton_B)) break;
-        if (in.down & HidNpadButton_Y) { scanDir(g_tab); s = 0; sr = 0; continue; }
+        if (in.down & HidNpadButton_Y) { scanDir(g_tab); s = 0; sy = 0; continue; }
         if (in.down & (HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL | HidNpadButton_ZR)) {
             g_tab = g_tab == TabVideo ? TabPhoto : TabVideo;
             continue;
@@ -916,16 +938,16 @@ static void galleryLoop() {
             sortList(g_lists[0]);
             sortList(g_lists[1]);
             sel[0] = sel[1] = 0;
-            scrollRow[0] = scrollRow[1] = 0;
+            scrollY[0] = scrollY[1] = 0;
             toast = std::string(TR("Sort: ", "並び順: ")) + kSortNames[g_sort];
             toastUntil = nowMs() + 1500;
             continue;
         }
 
         // ---- タッチ ----
-        static int dragStartRow = 0;
+        static int dragStartY = 0;
         const Touch &t = in.t;
-        if (t.down) dragStartRow = sr;
+        if (t.down) dragStartY = sy;
         if (t.tap) {
             // タブ
             bool handled = false;
@@ -942,33 +964,28 @@ static void galleryLoop() {
                 sortList(g_lists[0]);
                 sortList(g_lists[1]);
                 sel[0] = sel[1] = 0;
-                scrollRow[0] = scrollRow[1] = 0;
+                scrollY[0] = scrollY[1] = 0;
                 toast = std::string(TR("Sort: ", "並び順: ")) + kSortNames[g_sort];
                 toastUntil = nowMs() + 1500;
                 continue;
             }
             // サムネイル: タップで開く
-            if (t.y >= kGridY && t.y < H - 48 && t.x >= kGridX && t.x < kGridX + kCols * kCellW) {
-                const int col = (t.x - kGridX) / kCellW, row = (t.y - kGridY) / kCellH;
-                const int i = (sr + row) * kCols + col;
-                if (row < kVisibleRows && i < n) {
+            if (t.y >= kViewTop && t.y < kViewBottom && t.x >= kGridX && t.x < kGridX + kCols * kCellW) {
+                const int py = t.y - (kViewTop + kGridPad) + sy;
+                const int col = (t.x - kGridX) / kCellW, row = py / kCellH;
+                const int i = row * kCols + col;
+                if (py >= 0 && py % kCellH < kThumbH + 40 && i < n) {
                     s = i;
                     in.down |= HidNpadButton_A;
                 }
             }
         }
-        // 上下にドラッグでスクロール
-        if (t.held && t.moved && std::abs(t.dy()) > std::abs(t.dx()) && n > 0) {
-            const int maxRow = std::max(0, (n - 1) / kCols - kVisibleRows + 1);
-            const int newRow = std::clamp(dragStartRow - int(std::lround(double(t.dy()) / kCellH)), 0, maxRow);
-            if (newRow != sr) {
-                sr = newRow;
-                // 選んでいる物を見えている範囲に入れる
-                const int col = s % kCols;
-                int row = s / kCols;
-                row = std::clamp(row, sr, sr + kVisibleRows - 1);
-                s = std::min(row * kCols + col, n - 1);
-            }
+        // 上下にドラッグでスクロール(指に合わせてなめらかに動く)
+        static bool dragging = false;
+        if (t.down) dragging = false;
+        if (t.held && t.moved && (dragging || std::abs(t.dy()) >= std::abs(t.dx())) && n > 0) {
+            dragging = true;
+            sy = std::clamp(dragStartY - t.dy(), 0, maxScroll(n));
         }
 
         if (n > 0) {
@@ -982,32 +999,39 @@ static void galleryLoop() {
                 else viewPhotos(s, toast, toastUntil);
                 padUpdate(&g_pad);   // 再生画面で押したボタンを持ち越さない
             } else if (in.down & HidNpadButton_X) {
-                if (confirmDelete(s, sr, g_tab == TabVideo ? TR("Delete this video?", "この動画を削除しますか？") : TR("Delete this photo?", "この写真を削除しますか？"), false, nullptr)) {
+                if (confirmDelete(s, sy, g_tab == TabVideo ? TR("Delete this video?", "この動画を削除しますか？") : TR("Delete this photo?", "この写真を削除しますか？"), false, nullptr)) {
                     deleteEntry(s, toast);
                     toastUntil = nowMs() + 2500;
                 }
                 padUpdate(&g_pad);
             }
         }
-        // 選んでいる物が画面に入るようにスクロール
+        // ボタンで選ぶ物を変えたら、それが全部見えるようにスクロール
         const int n2 = int(cur().size());
         if (s >= n2) s = std::max(0, n2 - 1);
-        const int row = s / kCols;
-        if (row < sr) sr = row;
-        if (row >= sr + kVisibleRows) sr = row - kVisibleRows + 1;
+        if (s != prevSel && n2 > 0) {
+            const int top = kGridPad + (s / kCols) * kCellH - 8;
+            const int bottom = kGridPad + (s / kCols + 1) * kCellH;
+            if (top < sy) sy = top;
+            if (bottom > sy + kViewH) sy = bottom - kViewH;
+        }
+        sy = std::clamp(sy, 0, maxScroll(n2));
 
         // サムネイルは1フレームに1つずつ作る(画面が固まらないように)。見えている物を優先
+        // (指で触っている間は作らない。作っている間は画面が止まり、スクロールがカクつくため)
         std::vector<Entry> &l2 = cur();
-        for (int i = sr * kCols; i < n2 && i < (sr + kVisibleRows + 1) * kCols; i++) {
+        const int firstRow = std::max(0, (sy - kGridPad) / kCellH);
+        const int lastRow = (sy + kViewH) / kCellH + 1;
+        for (int i = firstRow * kCols; !t.held && i < n2 && i < (lastRow + 1) * kCols; i++) {
             if (!l2[i].thumbTried) {
-                drawList(s, sr, toast, toastUntil);
+                drawList(s, sy, toast, toastUntil);
                 SDL_RenderPresent(g_ren);
                 makeThumb(l2[i], g_tab);
                 break;
             }
         }
 
-        drawList(s, sr, toast, toastUntil);
+        drawList(s, sy, toast, toastUntil);
         SDL_RenderPresent(g_ren);
         trimTextCache();
     }

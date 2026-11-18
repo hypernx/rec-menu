@@ -31,11 +31,13 @@ jobs:
           T=tpl/libs/libtesla/include/tesla.hpp
           sed -i '/viAddToLayerStack(&this->m_layer, ViLayerStack_Recording));/d' $T
           # HOMEボタンと終了処理のフックを追加する
-          sed -i '/^#define ELEMENT_BOUNDS/a namespace tsl::impl { inline void (*onHomeButton)() = nullptr; inline void (*onBeforeExitScreen)() = nullptr; }' $T
+          sed -i '/^#define ELEMENT_BOUNDS/a namespace tsl::impl { inline void (*onHomeButton)() = nullptr; inline void (*onBeforeExitScreen)() = nullptr; inline ViDisplay *sharedDisplay = nullptr; }' $T
+          # Teslaが開いた画面(ディスプレイ)を通知の表示でも使えるようにする(2回は開けないため)
+          sed -i 's/^\( *\)ASSERT_FATAL(viOpenDefaultDisplay(&this->m_display));/&\n\1tsl::impl::sharedDisplay = \&this->m_display;/' $T
           sed -i '/case WaiterObject_HomeButton:/a\                            if (tsl::impl::onHomeButton) tsl::impl::onHomeButton();' $T
           sed -i 's/^\( *\)overlay->exitScreen();/\1if (tsl::impl::onBeforeExitScreen) tsl::impl::onBeforeExitScreen();\n\1overlay->exitScreen();/' $T
           grep -n 'onHomeButton\|onBeforeExitScreen\|ViLayerStack_Recording' $T
-          grep -q 'tsl::impl::onHomeButton();' $T && grep -q 'tsl::impl::onBeforeExitScreen();' $T
+          grep -q 'tsl::impl::onHomeButton();' $T && grep -q 'tsl::impl::onBeforeExitScreen();' $T && grep -q 'tsl::impl::sharedDisplay = &this->m_display;' $T
 
       - name: Replace sources
         run: |
@@ -122,7 +124,6 @@ jobs:
             cp RecGallery-$L.nro sd/switch/RecGallery.nro
             (cd sd && zip -qr ../Rec-Menu-and-Gallery-$L.zip switch)
           done
-          zip -q symbols-debug.zip *.elf
           rm -rf sd
           ls -l
 
@@ -136,7 +137,7 @@ jobs:
             TAG=$(grep -oE '"v[0-9.]+"' source/main.cpp | head -1 | tr -d '"')
           fi
           echo "tag: $TAG"
-          FILES="dist/Rec-Menu-and-Gallery-en.zip dist/Rec-Menu-and-Gallery-ja.zip dist/RecMenu-en.ovl dist/RecMenu-ja.ovl dist/RecGallery-en.nro dist/RecGallery-ja.nro dist/symbols-debug.zip"
+          FILES="dist/Rec-Menu-and-Gallery-en.zip dist/Rec-Menu-and-Gallery-ja.zip dist/RecMenu-en.ovl dist/RecMenu-ja.ovl dist/RecGallery-en.nro dist/RecGallery-ja.nro"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # 同じバージョンのリリースがあれば、文章とファイルを最新に差し替える
             echo "Release $TAG already exists. Updating notes and files."
