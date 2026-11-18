@@ -240,6 +240,23 @@ inline void drawToast(Canvas &c, const char *msg, Icon icon) {
     text(c, textX, by + int(fs * 0.36f), msg, fs, kWhite);
 }
 
+inline Icon g_toastIcon = Icon::Info;
+
+// 通知の位置(下から飛び出して、少し行き過ぎて戻る = ポップな動き)
+constexpr float kToastScale = 1.5f;
+constexpr int kToastW = 600, kToastH = 64;
+constexpr float kToastX = 30;
+constexpr float kToastShowY = 1080 - kToastH * kToastScale - 36;   // 表示中の位置
+constexpr float kToastHideY = 1080 + 8;                            // 画面の下の外
+constexpr u64 kPopInMs = 320, kPopOutMs = 220;
+
+inline float easeOutBack(float t) {   // 少し行き過ぎて戻る
+    const float c1 = 1.9f, c3 = c1 + 1;
+    const float u = t - 1;
+    return 1 + c3 * u * u * u + c1 * u * u;
+}
+inline float easeInCubic(float t) { return t * t * t; }
+
 // ---- 初期化(Teslaの画面の準備ができた後、メインスレッドから1回呼ぶ) ----
 inline void setStatus(const char *step, Result rc) {
     snprintf(g_status, sizeof(g_status), "%s err %04u-%04u", step, 2000 + R_MODULE(rc), R_DESCRIPTION(rc));
@@ -283,23 +300,6 @@ inline void exit() {
     g_display = nullptr;
     g_ready = false;
 }
-
-inline Icon g_toastIcon = Icon::Info;
-
-// 通知の位置(下から飛び出して、少し行き過ぎて戻る = ポップな動き)
-constexpr float kToastScale = 1.5f;
-constexpr int kToastW = 600, kToastH = 64;
-constexpr float kToastX = 30;
-constexpr float kToastShowY = 1080 - kToastH * kToastScale - 36;   // 表示中の位置
-constexpr float kToastHideY = 1080 + 8;                            // 画面の下の外
-constexpr u64 kPopInMs = 320, kPopOutMs = 220;
-
-inline float easeOutBack(float t) {   // 少し行き過ぎて戻る
-    const float c1 = 1.9f, c3 = c1 + 1;
-    const float u = t - 1;
-    return 1 + c3 * u * u * u + c1 * u * u;
-}
-inline float easeInCubic(float t) { return t * t * t; }
 
 // ---- 表示内容の設定(どのスレッドからでも可) ----
 inline void toast(const char *msg, Icon icon = Icon::Info, u32 ms = 3000) {
